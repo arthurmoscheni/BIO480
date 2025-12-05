@@ -1,0 +1,524 @@
+import os
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from scipy.signal import bessel, sosfilt
+import config
+
+def debug_plot_baseline_windows(grouped_cells, cols, fs=20000, max_cells_to_search=20):
+    """
+    Finds one active-touch sweep with >= 2 contacts and plots baseline windows
+    to verify data quality before running full analysis.
+    """
+    searched_cells = 0
+    for (mouse, count), cell_df in grouped_cells:
+        searched_cells += 1
+        if searched_cells > max_cells_to_search:
+            print("Searched max_cells_to_search cells, no suitable sweep found.")
+            return
+        
+        at_sweeps = cell_df[cell_df[cols['sweep_type']].astype(str).str.contains('active touch', case=False)]
+        for _, sweep in at_sweeps.iterrows():
+            raw_vm = np.array(sweep[cols['vm']])
+            contacts = sweep[cols['contacts']]
+            if contacts is None: continue
+            contacts = np.array(contacts)
+            if contacts.ndim == 0 or len(contacts) == 0: continue
+            if contacts.ndim == 1: contacts = contacts.reshape(1, -1)
+            
+            if contacts.shape[0] < 2: continue
+            
+            contact_times = contacts[:2, 0]
+            pre_samples = int(0.050 * fs)
+            post_samples = int(0.100 * fs)
+            baseline_win_samples = int(0.002 * fs)
+            
+            fig, axes = plt.subplots(2, 1, figsize=(10, 7), sharex=True)
+            for idx, (onset_time, ax) in enumerate(zip(contact_times, axes)):
+                onset_idx = int(onset_time * fs)
+                start_idx = onset_idx - pre_samples
+                end_idx = onset_idx + post_samples
+                if start_idx < 0 or end_idx > len(raw_vm): continue
+                
+                snippet = raw_vm[start_idx:end_idx]
+                t_ms = (np.arange(len(snippet)) - pre_samples) / fs * 1000 
+                
+                b_end = pre_samples
+                b_start = pre_samples - baseline_win_samples
+                baseline_mean = np.mean(snippet[b_start:b_end])
+                
+                ax.plot(t_ms, snippet, label="Raw Vm")
+                ax.axvspan(t_ms[b_start], t_ms[b_end-1], color='orange', alpha=0.3, label="Baseline" if idx==0 else None)
+                ax.axhline(baseline_mean, color='red', linestyle='--', label="Mean" if idx==0 else None)
+                ax.axvline(0, color='k', linestyle='--', label="Contact" if idx==0 else None)
+                ax.set_title(f"Cell {mouse}_{count} – Contact {idx+1}")
+                ax.set_ylabel("Vm (V)")
+                ax.grid(alpha=0.3)
+            
+            axes[-1].set_xlabel("Time from contact (ms)")
+            handles, labels = axes[0].get_legend_handles_labels()
+            if handles: fig.legend(handles, labels, loc="upper right")
+            plt.tight_layout()
+            plt.savefig(os.path.join(config.FIG_DIR, "debug_baseline_contacts.png"), dpi=300)
+            plt.close()
+            print(f"[DEBUG] Baseline window plot saved.")
+            return
+
+def plot_methodology_validation(grouped_cells, cols, fs=20000):
+    """
+    Generates a 2-panel figure:
+    A. Full sweep showing ICI classification (Long vs Short).
+    B. Zoomed-in event showing filtering, baseline window, and peak detection.
+    """
+    print("Searching for a suitable sweep (mixed ICIs) for plotting...")
+    
+    found_sweep = None
+    contacts_arr = None
+    
+    # 1. Search for a good example sweep
+    for (mouse, count), cell_df in grouped_cells:
+        at_sweeps = cell_df[cell_df[cols['sweep_type']].astype(str).str.contains('active touch', case=False)]
+        
+        for _, sweep in at_sweeps.iterrows():
+            contacts = sweep[cols['contacts']]
+            if contacts is None: continue
+            contacts = np.array(contacts)
+            if contacts.ndim == 1: contacts = contacts.reshape(1, -1)
+            
+            # We want at least 3 contacts to show dynamics
+            if len(contacts) < 3: continue
+            
+            # Check for mix of Long (>200ms) and Short (<200ms) ICIs
+            onsets = contacts[:, 0]
+            icis = np.diff(onsets)
+            
+            if np.any(icis > 0.200) and np.any(icis < 0.200):
+                found_sweep = sweep
+                contacts_arr = onsets
+                break
+        if found_sweep is not None: break
+    
+    if found_sweep is None:
+        print("No sweep with mixed ICIs found. Plotting functionality skipped.")
+        return
+    
+    # zoom in on 2nd contact to 5th contact
+    # Handle case where we don't have enough contacts after filtering
+    if len(contacts_arr) >= 5:
+        contacts_arr = contacts_arr[1:5]
+    else:
+        contacts_arr = contacts_arr[1:]
+
+    # 2. Prepare Data
+    raw_vm = np.array(found_sweep[cols['vm']])
+    time_axis = np.arange(len(raw_vm)) / fs
+    
+    # Filter (Bessel 300Hz)
+    sos = bessel(4, 300, 'low', fs=fs, output='sos')
+    filt_vm = sosfilt(sos, raw_vm)
+    
+    # 3. Create Plot
+    fig = plt.figure(figsize=(12, 10))
+    gs = fig.add_gridspec(2, 1, height_ratios=[1, 1.3], hspace=0.35)
+    
+    # --- Panel A: Full Trace & Stratification ---
+    ax1 = fig.add_subplot(gs[0])
+    ax1.plot(time_axis, raw_vm * 1000, color='gray', alpha=0.6, label='Raw Vm', lw=0.8)
+    # ax1.plot(time_axis, filt_vm * 1000, color='black', alpha=0.8, label='Filtered', lw=1) # Optional
+    
+    last_onset = -np.inf
+    for i, onset in enumerate(contacts_arr):
+        ici = onset - last_onset
+        if i == 0: ici = 999 # First contact is always Long
+        
+        is_long = ici > 0.200
+        color = 'tab:blue' if is_long else 'tab:orange'
+        label_txt = "Long\n(>200ms)" if is_long else "Short\n(<200ms)"
+        
+        ax1.axvline(onset, color=color, linestyle='--', lw=2, alpha=0.8)
+        # Label roughly above the trace
+        y_txt = np.max(raw_vm)*1000 + 2
+        ax1.text(onset, y_txt, label_txt, color=color, ha='center', fontsize=9, fontweight='bold')
+        
+        last_onset = onset
+
+    ax1.set_title("A. Event Detection & ICI Stratification", loc='left', fontweight='bold', fontsize=14)
+    ax1.set_ylabel("Vm (mV)")
+    ax1.set_xlabel("Time (s)")
+    if len(contacts_arr) > 0:
+        ax1.set_xlim(contacts_arr[0]-0.1, contacts_arr[-1]+0.2)
+    
+    # --- Panel B: Feature Extraction (Zoom on first Long Event) ---
+    ax2 = fig.add_subplot(gs[1])
+    
+    # Zoom window: -10ms to +50ms around first contact (or specific contact)
+    # Here we pick the last one or a specific index if available
+    target_idx = 3 if len(contacts_arr) > 3 else 0
+    target_onset = contacts_arr[target_idx] 
+    
+    win_pre = 0.050
+    win_post = 0.10
+    
+    idx_start = int((target_onset - win_pre) * fs)
+    idx_end = int((target_onset + win_post) * fs)
+    
+    # Relative time axis for zoom
+    t_zoom = (np.arange(idx_end - idx_start) / fs) - win_pre
+    vm_zoom_raw = raw_vm[idx_start:idx_end]
+    vm_zoom_filt = filt_vm[idx_start:idx_end]
+    
+    # Calculate Metrics for Visualization
+    # Baseline (-15ms to 0ms) - Adjusted logic from prompt to match typically used baseline in analysis
+    # Analysis uses -2ms to 0ms. Let's visualize that or the prompt's -15 to -10 depending on preference.
+    # The prompt code uses -15 to -10 for calculation here specifically.
+    base_mask = (t_zoom >= -0.015) & (t_zoom < -0.010)
+    baseline_val = np.mean(vm_zoom_filt[base_mask])
+    
+    # Peak Detection
+    resp_mask = (t_zoom >= 0.002) & (t_zoom <= 0.050)
+    resp_slice = vm_zoom_filt[resp_mask]
+    t_slice = t_zoom[resp_mask]
+
+    vm_delta = resp_slice - baseline_val
+
+    if len(vm_delta) > 0:
+        if np.max(vm_delta) >= np.abs(np.min(vm_delta)):
+            # Excitatory (EPSP)
+            peak_idx_local = np.argmax(vm_delta)
+        else:
+            # Inhibitory (IPSP)
+            peak_idx_local = np.argmin(vm_delta)
+            
+        peak_val = resp_slice[peak_idx_local]
+        peak_time = t_slice[peak_idx_local]
+
+        # Max Slope (0-20ms)
+        slope_mask = (t_zoom >= 0) & (t_zoom <= 0.020)
+        slope_slice = vm_zoom_filt[slope_mask]
+        dv = np.gradient(slope_slice) * fs
+        slope_idx_local = np.argmax(dv)  # Focus on depolarizing slope only
+        slope_time = t_zoom[slope_mask][slope_idx_local]
+        slope_val = vm_zoom_filt[slope_mask][slope_idx_local]
+
+        # Plotting B
+        ax2.plot(t_zoom * 1000, vm_zoom_raw * 1000, color='lightgray', label='Raw Trace')
+        ax2.plot(t_zoom * 1000, vm_zoom_filt * 1000, color='black', lw=2, label='Filtered (Bessel 300Hz)')
+        
+        # 1. Baseline Window
+        ax2.axvspan(-2, 0, color='gold', alpha=0.3, label='Baseline Window (-2ms)')
+        ax2.axhline(baseline_val * 1000, color='gold', linestyle='--', alpha=0.9)
+        
+        # 2. Contact Line
+        ax2.axvline(0, color='k', linestyle='-', lw=1)
+        
+        # 3. Peak & Slope
+        ax2.scatter(peak_time*1000, peak_val*1000, color='red', s=100, zorder=5, label='Detected Peak')
+        ax2.scatter(slope_time*1000, slope_val*1000, color='green', marker='s', s=80, zorder=5, label='Max Slope')
+        
+        # Annotations
+        ax2.annotate(f"Latency: {peak_time*1000:.1f}ms", 
+                     xy=(peak_time*1000, peak_val*1000), 
+                     xytext=(peak_time*1000 + 5, peak_val*1000),
+                     arrowprops=dict(arrowstyle='->', color='red'))
+
+        ax2.set_title("B. Feature Extraction: Baseline & Peak Detection", loc='left', fontweight='bold', fontsize=14)
+        ax2.set_xlabel("Time from Contact (ms)")
+        ax2.set_ylabel("Vm (mV)")
+        ax2.legend(loc='lower right', frameon=True)
+        ax2.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    # Updated to use config path
+    plt.savefig(os.path.join(config.FIG_DIR, "methodology_check.png"), dpi=300)
+    plt.show()
+
+def plot_pv_coupling_diagnostic(df_metrics):
+    if df_metrics.empty or 'PV' not in df_metrics['Cell_Type'].values:
+        print("No PV data available for coupling diagnostic.")
+        return
+
+    pv_data = df_metrics[df_metrics['Cell_Type'] == 'PV'].copy()
+
+    plt.figure(figsize=(8, 7))
+
+    # Plot: X=Amplitude (mV), Y=Delta Firing Rate (Hz)
+    plt.scatter(pv_data['Peak_Amp_V'] * 1000, 
+                pv_data['Delta_FR_0_50_Hz'], 
+                color='red', alpha=0.7, edgecolors='black', s=60, label='PV Cells')
+
+    # Add Reference Lines (The "Crosshair")
+    plt.axhline(0, color='black', linestyle='--', linewidth=1.5)
+    plt.axvline(0, color='black', linestyle='--', linewidth=1.5)
+
+    # Add Quadrant Interpretation Labels
+    xlims = plt.xlim()
+    ylims = plt.ylim()
+
+    # Top-Left: The "AHP Trap" (High Firing, Negative Vm)
+    plt.text(xlims[0] + (xlims[1]-xlims[0])*0.05, 
+            ylims[1] - (ylims[1]-ylims[0])*0.05, 
+            "POS Firing / NEG Vm\n(Likely AHP Contamination)", 
+            fontsize=10, color='darkred', fontweight='bold', ha='left', va='top',
+            bbox=dict(facecolor='white', alpha=0.8, edgecolor='none'))
+
+    # Top-Right: True Excitation
+    plt.text(xlims[1] - (xlims[1]-xlims[0])*0.05, 
+            ylims[1] - (ylims[1]-ylims[0])*0.05, 
+            "POS Firing / POS Vm\n(True Excitation)", 
+            fontsize=10, color='green', fontweight='bold', ha='right', va='top',
+            bbox=dict(facecolor='white', alpha=0.8, edgecolor='none'))
+
+    # Bottom-Left: True Inhibition
+    plt.text(xlims[0] + (xlims[1]-xlims[0])*0.05, 
+            ylims[0] + (ylims[1]-ylims[0])*0.05, 
+            "NEG Firing / NEG Vm\n(True Inhibition)", 
+            fontsize=10, color='blue', fontweight='bold', ha='left', va='bottom',
+            bbox=dict(facecolor='white', alpha=0.8, edgecolor='none'))
+
+    plt.xlabel("Peak Amplitude (mV)")
+    plt.ylabel("Change in Firing Rate (Hz)")
+    plt.title("PV Cells: E-I Coupling Diagnostic")
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+
+    # Save
+    save_path = os.path.join(config.FIG_DIR, "debug_PV_coupling_scatter.png")
+    plt.savefig(save_path, dpi=300)
+    plt.close()
+    print(f"[DEBUG] PV Diagnostic plot saved to: {save_path}")
+
+def generate_main_figures(df_metrics, trace_storage):
+    if df_metrics.empty:
+        return
+
+    colors = config.COLORS
+    time_axis = config.TIME_AXIS
+    
+    # 1. Standard Waveforms (Long ICI only)
+    plt.figure(figsize=(10, 6))
+    for ctype in ['EXC', 'PV', 'SST', 'VIP']:
+        if ctype not in trace_storage: continue
+        traces = trace_storage[ctype]['long']
+        if len(traces) > 0:
+            type_mean = np.mean(np.vstack(traces), axis=0) * 1000  # mV
+            plt.plot(time_axis, type_mean, color=colors[ctype],
+                     label=f"{ctype} (n={len(traces)})", linewidth=2)
+    
+    plt.axvline(0, color='grey', linestyle='--', label='Touch Onset')
+    plt.title("Active Touch Response Dynamics (Grand Average, Long ICI)")
+    plt.xlabel("Time from Contact (ms)")
+    plt.ylabel("Vm Change (mV)")
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    plt.xlim(-20, 60)
+    plt.tight_layout()
+    plt.savefig(os.path.join(config.FIG_DIR, "fig1_waveforms_long_ici.png"), dpi=300)
+    plt.close()
+
+    # 2. Boxplots: latency + slope (long ICI)
+    plt.figure(figsize=(12, 5))
+    plt.subplot(1, 2, 1)
+    sns.boxplot(x='Cell_Type', y='Time_to_Peak_ms', data=df_metrics,
+                palette=colors, showfliers=False)
+    plt.title("Response Latency (Time to Peak, long ICI)")
+    plt.ylabel("Time (ms)")
+    
+    plt.subplot(1, 2, 2)
+    sns.boxplot(x='Cell_Type', y='Max_Slope', data=df_metrics,
+                palette=colors, showfliers=False)
+    plt.title("Response Speed (Max Slope, long ICI)")
+    plt.ylabel("Slope (V/s)")
+    plt.tight_layout()
+    plt.savefig(os.path.join(config.FIG_DIR, "fig2_latency_and_slope_long_ici.png"), dpi=300)
+    plt.close()
+
+    # 3. Latency jitter plot
+    plt.figure(figsize=(6, 4))
+    sns.boxplot(x='Cell_Type', y='Latency_Jitter_ms', data=df_metrics,
+                palette=colors, showfliers=False)
+    sns.stripplot(x='Cell_Type', y='Latency_Jitter_ms', data=df_metrics,
+                  color='k', alpha=0.4)
+    plt.title("Latency Jitter (SD of Time-to-Peak)")
+    plt.ylabel("Jitter (ms)")
+    plt.tight_layout()
+    plt.savefig(os.path.join(config.FIG_DIR, "fig3_latency_jitter.png"), dpi=300)
+    plt.close()
+
+    # 4. Effect of ICI on time-to-peak
+    df_ici = df_metrics.melt(
+        id_vars=['Cell_Type', 'Cell_ID'],
+        value_vars=['Time_to_Peak_ms', 'Time_to_Peak_short_ms'],
+        var_name='ICI_condition',
+        value_name='Time_to_Peak_cond_ms'
+    )
+    df_ici['ICI_condition'] = df_ici['ICI_condition'].map({
+        'Time_to_Peak_ms': 'Long ICI',
+        'Time_to_Peak_short_ms': 'Short ICI'
+    })
+    df_ici = df_ici.dropna(subset=['Time_to_Peak_cond_ms'])
+
+    if not df_ici.empty:
+        plt.figure(figsize=(10, 4))
+        sns.boxplot(x='Cell_Type', y='Time_to_Peak_cond_ms',
+                    hue='ICI_condition', data=df_ici, showfliers=False)
+        plt.title("Effect of ICI on Latency")
+        plt.ylabel("Time to Peak (ms)")
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig(os.path.join(config.FIG_DIR, "fig4_ici_effect_latency.png"), dpi=300)
+        plt.close()
+
+    # 5. Latency vs dFR
+    plt.figure(figsize=(6, 5))
+    for ctype, ccol in colors.items():
+        sub = df_metrics[df_metrics['Cell_Type'] == ctype]
+        plt.scatter(sub['Time_to_Peak_ms'], sub['Delta_FR_0_50_Hz'],
+                    label=ctype, alpha=0.7, color=ccol)
+    plt.axhline(0, color='grey', linestyle='--')
+    plt.xlabel("Time to Peak (ms)")
+    plt.ylabel("dFR (Hz)")
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(os.path.join(config.FIG_DIR, "fig5_latency_vs_deltaFR.png"), dpi=300)
+    plt.close()
+
+    # 6. Feature Space
+    plt.figure(figsize=(6, 5))
+    for ctype, ccol in colors.items():
+        sub = df_metrics[df_metrics['Cell_Type'] == ctype]
+        plt.scatter(sub['Time_to_Peak_ms'], sub['Max_Slope'],
+                    label=ctype, alpha=0.7, color=ccol)
+    plt.xlabel("Time to Peak (ms)")
+    plt.ylabel("Max Slope (V/s)")
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(os.path.join(config.FIG_DIR, "fig6_feature_space.png"), dpi=300)
+    plt.close()
+
+    # 7. Slope Adaptation
+    plt.figure(figsize=(6, 5))
+    df_ratio = df_metrics.dropna(subset=['Slope_Adaptation_Ratio'])
+    sns.boxplot(x='Cell_Type', y='Slope_Adaptation_Ratio', data=df_ratio, palette=colors, showfliers=False)
+    plt.axhline(1.0, color='grey', linestyle='--', label='No Change')
+    plt.title("Slope Adaptation (Short / Long)")
+    plt.tight_layout()
+    plt.savefig(os.path.join(config.FIG_DIR, "fig7_slope_adaptation.png"), dpi=300)
+    plt.close()
+
+    # 8. EI Coupling
+    plt.figure(figsize=(6, 5))
+    df_coupling = df_metrics.dropna(subset=['EI_Coupling_Strength'])
+    sns.boxplot(x='Cell_Type', y='EI_Coupling_Strength', data=df_coupling, palette=colors, showfliers=False)
+    plt.axhline(0, color='grey', linestyle='--', label='No Coupling')
+    plt.title("E-I Coupling Strength")
+    plt.ylabel("Coupling (Hz/mV)")
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(os.path.join(config.FIG_DIR, "fig8_EI_coupling.png"), dpi=300)
+    plt.close()
+
+    # 9. Amplitude Adaptation Scatter
+    plt.figure(figsize=(7, 7))
+    for ctype in ['EXC', 'PV', 'SST', 'VIP']:
+        sub = df_metrics[df_metrics['Cell_Type'] == ctype]
+        plt.scatter(sub['Peak_Amp_V']*1000, sub['Peak_Amp_short_V']*1000, 
+                    color=colors[ctype], label=ctype, alpha=0.7)
+        
+    lims = [
+        np.nanmin([df_metrics['Peak_Amp_V'].min(), df_metrics['Peak_Amp_short_V'].min()])*1000,
+        np.nanmax([df_metrics['Peak_Amp_V'].max(), df_metrics['Peak_Amp_short_V'].max()])*1000
+    ]
+    plt.plot(lims, lims, 'k--', alpha=0.5, label="Identity")
+    
+    plt.xlabel("Amplitude Long ICI (mV)")
+    plt.ylabel("Amplitude Short ICI (mV)")
+    plt.title("Amplitude Adaptation: Short vs Long ICI")
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(os.path.join(config.FIG_DIR, "fig12_amplitude_scatter.png"), dpi=300)
+    plt.close()
+
+    # 10. Amplitude Adaptation Ratio Boxplot
+    plt.figure(figsize=(6, 5))
+    df_amp_ratio = df_metrics.dropna(subset=['Amp_Adaptation_Ratio'])
+    # Clean extreme outliers for plotting
+    df_amp_ratio = df_amp_ratio[df_amp_ratio['Amp_Adaptation_Ratio'].between(-2, 5)] 
+    
+    sns.boxplot(x='Cell_Type', y='Amp_Adaptation_Ratio', data=df_amp_ratio, palette=colors, showfliers=False)
+    plt.axhline(1.0, color='grey', linestyle='--', label='No Change')
+    plt.title("Amplitude Adaptation Ratio (Amp_Short / Amp_Long)")
+    plt.ylabel("Ratio")
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(os.path.join(config.FIG_DIR, "fig13_amplitude_ratio.png"), dpi=300)
+    plt.close()
+
+    # 11. Waveform Overlay (Long vs Short)
+    plt.figure(figsize=(12, 8))
+    for i, ctype in enumerate(['EXC', 'PV', 'SST', 'VIP']):
+        plt.subplot(2, 2, i+1)
+        if ctype not in trace_storage: continue
+
+        traces_l = trace_storage[ctype]['long']
+        traces_s = trace_storage[ctype]['short']
+        
+        if len(traces_l) > 0 and len(traces_s) > 0:
+            mean_l = np.mean(np.vstack(traces_l), axis=0) * 1000
+            mean_s = np.mean(np.vstack(traces_s), axis=0) * 1000
+            
+            plt.plot(time_axis, mean_l, color=colors[ctype], linestyle='-', linewidth=2, label=f'Long (n={len(traces_l)})')
+            plt.plot(time_axis, mean_s, color=colors[ctype], linestyle=':', linewidth=2, label=f'Short (n={len(traces_s)})')
+            
+            plt.fill_between(time_axis, mean_l, mean_s, color=colors[ctype], alpha=0.1)
+            
+        plt.axvline(0, color='grey', linestyle='--')
+        plt.title(f"{ctype}: Short vs Long Adaptation")
+        plt.xlabel("Time (ms)")
+        plt.ylabel("Vm (mV)")
+        plt.legend(fontsize='small')
+        plt.xlim(-10, 50) 
+        plt.grid(alpha=0.2)
+
+    plt.tight_layout()
+    plt.savefig(os.path.join(config.FIG_DIR, "fig14_waveform_comparison.png"), dpi=300)
+    plt.close()
+    
+    print("\nFigures Generated successfully.")
+    
+    # === EPSP vs IPSP separation ===
+    df_metrics['Response_Type'] = np.where(df_metrics['Peak_Amp_V'] >= 0, 'EPSP-dominated', 'IPSP-dominated')
+
+    # Histogram of mean amplitude by cell type
+    plt.figure(figsize=(8, 5))
+    for ctype, ccol in colors.items():
+        sub = df_metrics[df_metrics['Cell_Type'] == ctype]
+        plt.hist(sub['Peak_Amp_V']*1000, bins=20, alpha=0.5, label=ctype, color=ccol)
+    plt.xlabel("Mean Peak Amplitude (mV)")
+    plt.ylabel("Cell count")
+    plt.title("Distribution of touch-evoked PSP amplitudes")
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(os.path.join(config.FIG_DIR, "fig_epsp_ipsp_amplitude_hist.png"), dpi=300)
+    plt.close()
+
+    # Repeat key latency plot for EPSP-only cells
+    df_epsp = df_metrics[df_metrics['Response_Type'] == 'EPSP-dominated']
+
+    plt.figure(figsize=(6, 4))
+    sns.boxplot(x='Cell_Type', y='Time_to_Peak_ms', data=df_epsp, palette=colors, showfliers=False)
+    plt.title("Response Latency (EPSP-dominated cells only)")
+    plt.ylabel("Time to Peak (ms)")
+    plt.tight_layout()
+    plt.savefig(os.path.join(config.FIG_DIR, "fig_latency_epsp_only.png"), dpi=300)
+    plt.close()
+
+    # Repeat slope adaptation plot for EPSP-only
+    plt.figure(figsize=(6, 4))
+    df_epsp_ratio = df_epsp.dropna(subset=['Slope_Adaptation_Ratio'])
+    sns.boxplot(x='Cell_Type', y='Slope_Adaptation_Ratio', data=df_epsp_ratio, palette=colors, showfliers=False)
+    plt.axhline(1.0, color='grey', linestyle='--')
+    plt.title("Slope Adaptation (EPSP-dominated cells only)")
+    plt.tight_layout()
+    plt.savefig(os.path.join(config.FIG_DIR, "fig_slope_adaptation_epsp_only.png"), dpi=300)
+    plt.close()
