@@ -44,10 +44,14 @@ def get_contact_responses(sweep, cols, fs=20000, ici_threshold=0.200,
             continue
 
         raw_snippet = raw_vm[start_idx:end_idx]
-        snippet_clean = remove_aps_interpolation(raw_snippet, threshold=-20)
-        
+        # snippet_clean = remove_aps_interpolation(raw_snippet, threshold=-20)
+        snippet_clean = remove_aps_interpolation(raw_snippet, fs=fs, slope_thresh=20, win_ms=6.0, voltage_safety_thresh=-0.040)
+
+
         # Baseline Calculation (-2ms to 0ms)
-        b_win_samples = int(0.002 * fs)
+        # b_win_samples = int(0.002 * fs)
+        b_win_samples = int(0.020 * fs) # Using 20ms for more stable baseline
+
         baseline_segment = snippet_clean[pre_samples - b_win_samples : pre_samples]
 
         if len(baseline_segment) > 0:
@@ -56,7 +60,7 @@ def get_contact_responses(sweep, cols, fs=20000, ici_threshold=0.200,
         else:
             baseline = snippet_clean[pre_samples-1]
             baseline_sd = 0.0
-            
+        
         psp = snippet_clean - baseline
 
         # Pre-Touch slope Calculation (Last 50ms)
@@ -73,6 +77,9 @@ def get_contact_responses(sweep, cols, fs=20000, ici_threshold=0.200,
         # QC Filter
         if do_filter and abs(pre_touch_slope) > max_slope_thresh:
             continue 
+        if baseline_sd > 0.005:  # 5 mV
+            continue # Skip noisy trials
+
 
         # Vm-based metrics
         ttp, slope, amp = calculate_metrics(psp, fs=fs)
@@ -133,7 +140,8 @@ def run_full_analysis(grouped_cells, columns, config):
             long_events = [ev for ev in all_events if ev['is_long']]
             short_events = [ev for ev in all_events if not ev['is_long']]
 
-            if len(long_events) == 0: continue
+            # if len(long_events) == 0: continue
+            if len(long_events) < 5: continue # Require at least 5 long ICI events
 
             try:
                 # --- Long ICI Metrics ---
@@ -171,6 +179,7 @@ def run_full_analysis(grouped_cells, columns, config):
                         trace_storage[cell_type]['short'].append(grand_avg_short)
 
                     if abs(mean_slope) > 1e-6:
+
                         slope_ratio = mean_slope_short / mean_slope
                     else: slope_ratio = np.nan
                     

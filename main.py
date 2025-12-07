@@ -39,7 +39,7 @@ def main():
 
     # 3. QC Plots
     debug_plot_baseline_windows(grouped_cells, columns)
-    plot_methodology_validation(grouped_cells, columns)
+    plot_methodology_validation(grouped_cells, columns, target_index=3, target_type='SST')
 
     # 4. Main Figures
     generate_main_figures(df_metrics, trace_storage)
@@ -47,13 +47,15 @@ def main():
 
     # 5. Classifiers
     # 4-Class
-    run_classifier_analysis(df_metrics, suffix="")
+    run_classifier_analysis(df_metrics, suffix="", use_bayes_search=True)
     # 3-Class (EXC, PV, SST)
-    run_classifier_analysis(df_metrics, allowed_classes=['EXC', 'PV', 'SST'], suffix="_3class")
-
+    run_classifier_analysis(df_metrics, allowed_classes=['EXC', 'PV', 'SST'], suffix="_3class", use_bayes_search=True)
+    # 2-Class (EXC vs. INH)
+    run_classifier_analysis(df_metrics, allowed_classes=['EXC', 'SST'], suffix="_2class", use_bayes_search=True)
     # 6. Stats Summary
     print("\n--- Summary Statistics ---")
-    print(df_metrics.groupby('Cell_Type')[['Slope_Adaptation_Ratio', 'EI_Coupling_Strength']].mean())
+    print(df_metrics.groupby('Cell_Type')[['Slope_Adaptation_Ratio', 'EI_Coupling_Strength']].median())
+
 
 if __name__ == "__main__":
     main()

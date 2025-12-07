@@ -64,80 +64,265 @@ def debug_plot_baseline_windows(grouped_cells, cols, fs=20000, max_cells_to_sear
             print(f"[DEBUG] Baseline window plot saved.")
             return
 
-def plot_methodology_validation(grouped_cells, cols, fs=20000):
-    """
-    Generates a 2-panel figure:
-    A. Full sweep showing ICI classification (Long vs Short).
-    B. Zoomed-in event showing filtering, baseline window, and peak detection.
-    """
-    print("Searching for a suitable sweep (mixed ICIs) for plotting...")
+# def plot_methodology_validation(grouped_cells, cols, fs=20000):
+#     """
+#     Generates a 2-panel figure:
+#     A. Full sweep showing ICI classification (Long vs Short).
+#     B. Zoomed-in event showing filtering, baseline window, and peak detection.
+#     """
+#     print("Searching for a suitable sweep (mixed ICIs) for plotting...")
     
+#     found_sweep = None
+#     contacts_arr = None
+    
+#     # 1. Search for a good example sweep
+#     for (mouse, count), cell_df in grouped_cells:
+#         at_sweeps = cell_df[cell_df[cols['sweep_type']].astype(str).str.contains('active touch', case=False)]
+        
+#         for _, sweep in at_sweeps.iterrows():
+#             contacts = sweep[cols['contacts']]
+#             if contacts is None: continue
+#             contacts = np.array(contacts)
+#             if contacts.ndim == 1: contacts = contacts.reshape(1, -1)
+            
+#             # We want at least 3 contacts to show dynamics
+#             if len(contacts) < 3: continue
+            
+#             # Check for mix of Long (>200ms) and Short (<200ms) ICIs
+#             onsets = contacts[:, 0]
+#             icis = np.diff(onsets)
+            
+#             if np.any(icis > 0.200) and np.any(icis < 0.200):
+#                 found_sweep = sweep
+#                 contacts_arr = onsets
+#                 break
+#         if found_sweep is not None: break
+    
+#     if found_sweep is None:
+#         print("No sweep with mixed ICIs found. Plotting functionality skipped.")
+#         return
+    
+#     # zoom in on 2nd contact to 5th contact
+#     # Handle case where we don't have enough contacts after filtering
+#     if len(contacts_arr) >= 5:
+#         contacts_arr = contacts_arr[1:5]
+#     else:
+#         contacts_arr = contacts_arr[1:]
+
+#     # 2. Prepare Data
+#     raw_vm = np.array(found_sweep[cols['vm']])
+#     time_axis = np.arange(len(raw_vm)) / fs
+    
+#     # Filter (Bessel 300Hz)
+#     sos = bessel(4, 300, 'low', fs=fs, output='sos')
+#     filt_vm = sosfilt(sos, raw_vm)
+    
+#     # 3. Create Plot
+#     fig = plt.figure(figsize=(12, 10))
+#     gs = fig.add_gridspec(2, 1, height_ratios=[1, 1.3], hspace=0.35)
+    
+#     # --- Panel A: Full Trace & Stratification ---
+#     ax1 = fig.add_subplot(gs[0])
+#     ax1.plot(time_axis, raw_vm * 1000, color='gray', alpha=0.6, label='Raw Vm', lw=0.8)
+#     # ax1.plot(time_axis, filt_vm * 1000, color='black', alpha=0.8, label='Filtered', lw=1) # Optional
+    
+#     last_onset = -np.inf
+#     for i, onset in enumerate(contacts_arr):
+#         ici = onset - last_onset
+#         if i == 0: ici = 999 # First contact is always Long
+        
+#         is_long = ici > 0.200
+#         color = 'tab:blue' if is_long else 'tab:orange'
+#         label_txt = "Long\n(>200ms)" if is_long else "Short\n(<200ms)"
+        
+#         ax1.axvline(onset, color=color, linestyle='--', lw=2, alpha=0.8)
+#         # Label roughly above the trace
+#         y_txt = np.max(raw_vm)*1000 + 2
+#         ax1.text(onset, y_txt, label_txt, color=color, ha='center', fontsize=9, fontweight='bold')
+        
+#         last_onset = onset
+
+#     ax1.set_title("A. Event Detection & ICI Stratification", loc='left', fontweight='bold', fontsize=14)
+#     ax1.set_ylabel("Vm (mV)")
+#     ax1.set_xlabel("Time (s)")
+#     if len(contacts_arr) > 0:
+#         ax1.set_xlim(contacts_arr[0]-0.1, contacts_arr[-1]+0.2)
+    
+#     # --- Panel B: Feature Extraction (Zoom on first Long Event) ---
+#     ax2 = fig.add_subplot(gs[1])
+    
+#     # Zoom window: -10ms to +50ms around first contact (or specific contact)
+#     # Here we pick the last one or a specific index if available
+#     target_idx = 3 if len(contacts_arr) > 3 else 0
+#     target_onset = contacts_arr[target_idx] 
+    
+#     win_pre = 0.050
+#     win_post = 0.10
+    
+#     idx_start = int((target_onset - win_pre) * fs)
+#     idx_end = int((target_onset + win_post) * fs)
+    
+#     # Relative time axis for zoom
+#     t_zoom = (np.arange(idx_end - idx_start) / fs) - win_pre
+#     vm_zoom_raw = raw_vm[idx_start:idx_end]
+#     vm_zoom_filt = filt_vm[idx_start:idx_end]
+    
+#     # Calculate Metrics for Visualization
+#     # Baseline (-15ms to 0ms) - Adjusted logic from prompt to match typically used baseline in analysis
+#     # Analysis uses -2ms to 0ms. Let's visualize that or the prompt's -15 to -10 depending on preference.
+#     # The prompt code uses -15 to -10 for calculation here specifically.
+#     base_mask = (t_zoom >= -0.015) & (t_zoom < -0.010)
+#     baseline_val = np.mean(vm_zoom_filt[base_mask])
+    
+#     # Peak Detection
+#     resp_mask = (t_zoom >= 0.002) & (t_zoom <= 0.050)
+#     resp_slice = vm_zoom_filt[resp_mask]
+#     t_slice = t_zoom[resp_mask]
+
+#     vm_delta = resp_slice - baseline_val
+
+#     if len(vm_delta) > 0:
+#         if np.max(vm_delta) >= np.abs(np.min(vm_delta)):
+#             # Excitatory (EPSP)
+#             peak_idx_local = np.argmax(vm_delta)
+#         else:
+#             # Inhibitory (IPSP)
+#             peak_idx_local = np.argmin(vm_delta)
+            
+#         peak_val = resp_slice[peak_idx_local]
+#         peak_time = t_slice[peak_idx_local]
+
+#         # Max Slope (0-20ms)
+#         slope_mask = (t_zoom >= 0) & (t_zoom <= 0.020)
+#         slope_slice = vm_zoom_filt[slope_mask]
+#         dv = np.gradient(slope_slice) * fs
+#         slope_idx_local = np.argmax(dv)  # Focus on depolarizing slope only
+#         slope_time = t_zoom[slope_mask][slope_idx_local]
+#         slope_val = vm_zoom_filt[slope_mask][slope_idx_local]
+
+#         # Plotting B
+#         ax2.plot(t_zoom * 1000, vm_zoom_raw * 1000, color='lightgray', label='Raw Trace')
+#         ax2.plot(t_zoom * 1000, vm_zoom_filt * 1000, color='black', lw=2, label='Filtered (Bessel 300Hz)')
+        
+#         # 1. Baseline Window
+#         ax2.axvspan(-50, 0, color='gold', alpha=0.3, label='Baseline Window (-50ms)')
+#         ax2.axhline(baseline_val * 1000, color='gold', linestyle='--', alpha=0.9)
+        
+#         # 2. Contact Line
+#         ax2.axvline(0, color='k', linestyle='-', lw=1)
+        
+#         # 3. Peak & Slope
+#         ax2.scatter(peak_time*1000, peak_val*1000, color='red', s=100, zorder=5, label='Detected Peak')
+#         ax2.scatter(slope_time*1000, slope_val*1000, color='green', marker='s', s=80, zorder=5, label='Max Slope')
+        
+#         # Annotations
+#         ax2.annotate(f"Latency: {peak_time*1000:.1f}ms", 
+#                      xy=(peak_time*1000, peak_val*1000), 
+#                      xytext=(peak_time*1000 + 5, peak_val*1000),
+#                      arrowprops=dict(arrowstyle='->', color='red'))
+
+#         ax2.set_title("B. Feature Extraction: Baseline & Peak Detection", loc='left', fontweight='bold', fontsize=14)
+#         ax2.set_xlabel("Time from Contact (ms)")
+#         ax2.set_ylabel("Vm (mV)")
+#         ax2.legend(loc='lower right', frameon=True)
+#         ax2.grid(True, alpha=0.3)
+    
+#     plt.tight_layout()
+#     # Updated to use config path
+#     plt.savefig(os.path.join(config.FIG_DIR, "methodology_check.png"), dpi=300)
+#     plt.show()
+
+def plot_methodology_validation(grouped_cells, cols, fs=20000, 
+                                target_index=0, target_type=None):
+    """
+    target_index (int): 0 = plot 1st match, 1 = plot 2nd match, etc.
+    target_type (str): If set (e.g., 'PV'), only looks for that cell type.
+    """
+    print(f"Searching for match #{target_index + 1} (Type: {target_type if target_type else 'Any'})...")
+    
+    matches_found = 0
     found_sweep = None
     contacts_arr = None
     
     # 1. Search for a good example sweep
     for (mouse, count), cell_df in grouped_cells:
+        
+        # A. Filter by Cell Type (if requested)
+        current_type = cell_df[cols['type']].iloc[0]
+        if target_type is not None and target_type != current_type:
+            continue
+
         at_sweeps = cell_df[cell_df[cols['sweep_type']].astype(str).str.contains('active touch', case=False)]
         
+        sweep_candidate = None
+        contacts_candidate = None
+        
+        # Check sweeps for this cell
         for _, sweep in at_sweeps.iterrows():
             contacts = sweep[cols['contacts']]
             if contacts is None: continue
             contacts = np.array(contacts)
             if contacts.ndim == 1: contacts = contacts.reshape(1, -1)
             
-            # We want at least 3 contacts to show dynamics
-            if len(contacts) < 3: continue
+            if len(contacts) < 5: continue
             
-            # Check for mix of Long (>200ms) and Short (<200ms) ICIs
             onsets = contacts[:, 0]
             icis = np.diff(onsets)
             
+            # Must have Mixed ICIs
             if np.any(icis > 0.200) and np.any(icis < 0.200):
-                found_sweep = sweep
-                contacts_arr = onsets
+                sweep_candidate = sweep
+                contacts_candidate = onsets
+                break # Found a good sweep for THIS cell
+        
+        # B. If this cell has a good sweep, check if it's the one we want
+        if sweep_candidate is not None:
+            if matches_found == target_index:
+                found_sweep = sweep_candidate
+                contacts_arr = contacts_candidate
+                # Add Cell ID to title for clarity
+                print(f"Found match! Cell: {mouse}_{count} ({current_type})")
                 break
-        if found_sweep is not None: break
+            else:
+                matches_found += 1 # Valid match, but not the one we want yet
     
     if found_sweep is None:
-        print("No sweep with mixed ICIs found. Plotting functionality skipped.")
+        print("Target cell not found. Try reducing target_index.")
         return
     
-    # zoom in on 2nd contact to 5th contact
-    # Handle case where we don't have enough contacts after filtering
-    if len(contacts_arr) >= 5:
-        contacts_arr = contacts_arr[1:5]
-    else:
-        contacts_arr = contacts_arr[1:]
-
     # 2. Prepare Data
     raw_vm = np.array(found_sweep[cols['vm']])
     time_axis = np.arange(len(raw_vm)) / fs
     
-    # Filter (Bessel 300Hz)
-    sos = bessel(4, 300, 'low', fs=fs, output='sos')
+    # Filter (Bessel 2000Hz)
+    sos = bessel(4, 2000, 'low', fs=fs, output='sos')
     filt_vm = sosfilt(sos, raw_vm)
     
     # 3. Create Plot
-    fig = plt.figure(figsize=(12, 10))
+    fig = plt.figure(figsize=(12, 12))
     gs = fig.add_gridspec(2, 1, height_ratios=[1, 1.3], hspace=0.35)
     
     # --- Panel A: Full Trace & Stratification ---
     ax1 = fig.add_subplot(gs[0])
-    ax1.plot(time_axis, raw_vm * 1000, color='gray', alpha=0.6, label='Raw Vm', lw=0.8)
-    # ax1.plot(time_axis, filt_vm * 1000, color='black', alpha=0.8, label='Filtered', lw=1) # Optional
+    ax1.plot(time_axis, raw_vm * 1000, color='gray', alpha=0.5, label='Raw Vm', lw=0.8)
+    ax1.plot(time_axis, filt_vm * 1000, color='black', alpha=0.8, label='Filtered (300Hz)', lw=0.8)
     
     last_onset = -np.inf
-    for i, onset in enumerate(contacts_arr):
+    # Plot a subset of contacts to avoid clutter if too many
+    plot_contacts = contacts_arr if len(contacts_arr) < 4 else contacts_arr[:4]
+
+    for i, onset in enumerate(plot_contacts):
         ici = onset - last_onset
         if i == 0: ici = 999 # First contact is always Long
         
         is_long = ici > 0.200
         color = 'tab:blue' if is_long else 'tab:orange'
-        label_txt = "Long\n(>200ms)" if is_long else "Short\n(<200ms)"
+        label_txt = "Long" if is_long else "Short"
         
         ax1.axvline(onset, color=color, linestyle='--', lw=2, alpha=0.8)
+        
         # Label roughly above the trace
-        y_txt = np.max(raw_vm)*1000 + 2
+        y_txt = np.max(filt_vm)*1000 + 5
         ax1.text(onset, y_txt, label_txt, color=color, ha='center', fontsize=9, fontweight='bold')
         
         last_onset = onset
@@ -145,92 +330,112 @@ def plot_methodology_validation(grouped_cells, cols, fs=20000):
     ax1.set_title("A. Event Detection & ICI Stratification", loc='left', fontweight='bold', fontsize=14)
     ax1.set_ylabel("Vm (mV)")
     ax1.set_xlabel("Time (s)")
-    if len(contacts_arr) > 0:
-        ax1.set_xlim(contacts_arr[0]-0.1, contacts_arr[-1]+0.2)
+    if len(plot_contacts) > 0:
+        ax1.set_xlim(plot_contacts[0]-0.2, plot_contacts[-1]+0.2)
+    ax1.legend(loc='upper right')
     
-    # --- Panel B: Feature Extraction (Zoom on first Long Event) ---
+    # --- Panel B: Feature Extraction (Zoom on a specific Long Event) ---
     ax2 = fig.add_subplot(gs[1])
     
-    # Zoom window: -10ms to +50ms around first contact (or specific contact)
-    # Here we pick the last one or a specific index if available
-    target_idx = 3 if len(contacts_arr) > 3 else 0
+    # Pick the first "Long" event found (to show clean baseline)
+    target_idx = 0
+    # Try to find a long event that isn't the very start of the file
+    for i in range(1, len(contacts_arr)):
+        if (contacts_arr[i] - contacts_arr[i-1]) > 0.200:
+            target_idx = i
+            break
+            
     target_onset = contacts_arr[target_idx] 
     
-    win_pre = 0.050
-    win_post = 0.10
+    win_pre = 0.080  # Show 80ms before
+    win_post = 0.100 # Show 100ms after
     
     idx_start = int((target_onset - win_pre) * fs)
     idx_end = int((target_onset + win_post) * fs)
     
     # Relative time axis for zoom
     t_zoom = (np.arange(idx_end - idx_start) / fs) - win_pre
-    vm_zoom_raw = raw_vm[idx_start:idx_end]
     vm_zoom_filt = filt_vm[idx_start:idx_end]
     
-    # Calculate Metrics for Visualization
-    # Baseline (-15ms to 0ms) - Adjusted logic from prompt to match typically used baseline in analysis
-    # Analysis uses -2ms to 0ms. Let's visualize that or the prompt's -15 to -10 depending on preference.
-    # The prompt code uses -15 to -10 for calculation here specifically.
-    base_mask = (t_zoom >= -0.015) & (t_zoom < -0.010)
-    baseline_val = np.mean(vm_zoom_filt[base_mask])
+    # --- 1. Linear Drift Calculation (Visualizing the polyfit) ---
+    # Baseline window: -50ms to 0ms
+    base_mask = (t_zoom >= -0.050) & (t_zoom < 0)
+    base_time = t_zoom[base_mask]
+    base_vm = vm_zoom_filt[base_mask]
     
-    # Peak Detection
+    if len(base_vm) > 1:
+        # Fit line: y = mx + c
+        poly = np.polyfit(base_time, base_vm, 1)
+        drift_line = np.polyval(poly, base_time)
+        drift_slope = poly[0] # V/s
+    else:
+        drift_line = base_vm
+        drift_slope = 0
+        
+    baseline_mean = np.mean(base_vm)
+
+    # --- 2. Peak Detection ---
     resp_mask = (t_zoom >= 0.002) & (t_zoom <= 0.050)
     resp_slice = vm_zoom_filt[resp_mask]
     t_slice = t_zoom[resp_mask]
 
-    vm_delta = resp_slice - baseline_val
-
+    vm_delta = resp_slice - baseline_mean
+    
+    peak_time = 0
+    peak_val = baseline_mean
+    
     if len(vm_delta) > 0:
-        if np.max(vm_delta) >= np.abs(np.min(vm_delta)):
-            # Excitatory (EPSP)
+        if np.max(vm_delta) >= np.abs(np.min(vm_delta)): # EPSP
             peak_idx_local = np.argmax(vm_delta)
-        else:
-            # Inhibitory (IPSP)
+        else: # IPSP
             peak_idx_local = np.argmin(vm_delta)
             
         peak_val = resp_slice[peak_idx_local]
         peak_time = t_slice[peak_idx_local]
 
-        # Max Slope (0-20ms)
-        slope_mask = (t_zoom >= 0) & (t_zoom <= 0.020)
-        slope_slice = vm_zoom_filt[slope_mask]
-        dv = np.gradient(slope_slice) * fs
-        slope_idx_local = np.argmax(dv)  # Focus on depolarizing slope only
-        slope_time = t_zoom[slope_mask][slope_idx_local]
-        slope_val = vm_zoom_filt[slope_mask][slope_idx_local]
+    # --- Plotting B ---
+    ax2.plot(t_zoom * 1000, vm_zoom_filt * 1000, color='black', lw=2, label='Filtered Trace')
+    
+    # A. Baseline Window Shading
+    ax2.axvspan(-50, 0, color='gold', alpha=0.2, label='Baseline Window (-50ms)')
+    
+    # B. Drift Line (Red)
+    ax2.plot(base_time * 1000, drift_line * 1000, color='red', lw=2.5, linestyle='-', 
+             label=f'Linear Drift Fit (Slope={drift_slope:.3f} V/s)')
+    
+    # C. Contact Line
+    ax2.axvline(0, color='k', linestyle='--', lw=1)
+    
+    # D. Peak Marker
+    ax2.scatter(peak_time*1000, peak_val*1000, color='red', s=120, zorder=5, marker='o', label='Detected Peak')
+    
+    # E. Annotations
+    ax2.set_title("B. Quality Control: Linear Drift & Peak Detection", loc='left', fontweight='bold', fontsize=14)
+    ax2.set_xlabel("Time from Contact (ms)")
+    ax2.set_ylabel("Vm (mV)")
+    
+    # Add text box for metrics
+    textstr = '\n'.join((
+        r'$\mathrm{Drift\ Slope}=%.2f\ V/s$' % (drift_slope, ),
+        r'$\mathrm{Baseline\ SD}=%.3f\ mV$' % (np.std(base_vm)*1000, ),
+        r'$\mathrm{Peak\ Amp}=%.2f\ mV$' % ((peak_val - baseline_mean)*1000, )))
+    
+    props = dict(boxstyle='round', facecolor='white', alpha=0.9)
+    ax2.text(0.02, 0.95, textstr, transform=ax2.transAxes, fontsize=12,
+            verticalalignment='top', bbox=props)
 
-        # Plotting B
-        ax2.plot(t_zoom * 1000, vm_zoom_raw * 1000, color='lightgray', label='Raw Trace')
-        ax2.plot(t_zoom * 1000, vm_zoom_filt * 1000, color='black', lw=2, label='Filtered (Bessel 300Hz)')
-        
-        # 1. Baseline Window
-        ax2.axvspan(-2, 0, color='gold', alpha=0.3, label='Baseline Window (-2ms)')
-        ax2.axhline(baseline_val * 1000, color='gold', linestyle='--', alpha=0.9)
-        
-        # 2. Contact Line
-        ax2.axvline(0, color='k', linestyle='-', lw=1)
-        
-        # 3. Peak & Slope
-        ax2.scatter(peak_time*1000, peak_val*1000, color='red', s=100, zorder=5, label='Detected Peak')
-        ax2.scatter(slope_time*1000, slope_val*1000, color='green', marker='s', s=80, zorder=5, label='Max Slope')
-        
-        # Annotations
-        ax2.annotate(f"Latency: {peak_time*1000:.1f}ms", 
-                     xy=(peak_time*1000, peak_val*1000), 
-                     xytext=(peak_time*1000 + 5, peak_val*1000),
-                     arrowprops=dict(arrowstyle='->', color='red'))
-
-        ax2.set_title("B. Feature Extraction: Baseline & Peak Detection", loc='left', fontweight='bold', fontsize=14)
-        ax2.set_xlabel("Time from Contact (ms)")
-        ax2.set_ylabel("Vm (mV)")
-        ax2.legend(loc='lower right', frameon=True)
-        ax2.grid(True, alpha=0.3)
+    ax2.legend(loc='lower right', frameon=True)
+    ax2.grid(True, alpha=0.3)
     
     plt.tight_layout()
-    # Updated to use config path
-    plt.savefig(os.path.join(config.FIG_DIR, "methodology_check.png"), dpi=300)
-    plt.show()
+    # Save using config path
+    FIG_DIR = config.FIG_DIR if hasattr(config, 'FIG_DIR') else "."
+    save_path = os.path.join(FIG_DIR, "methodology_check.png")
+    plt.savefig(save_path, dpi=300)
+    print(f"Validation plot saved to: {save_path}")
+    plt.close()
+
+
 
 def plot_pv_coupling_diagnostic(df_metrics):
     if df_metrics.empty or 'PV' not in df_metrics['Cell_Type'].values:
@@ -477,7 +682,7 @@ def generate_main_figures(df_metrics, trace_storage):
         plt.xlabel("Time (ms)")
         plt.ylabel("Vm (mV)")
         plt.legend(fontsize='small')
-        plt.xlim(-10, 50) 
+        plt.xlim(-10, 100) 
         plt.grid(alpha=0.2)
 
     plt.tight_layout()
