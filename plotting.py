@@ -4,6 +4,8 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from scipy.signal import bessel, sosfilt
 import config
+import matplotlib.pyplot as plt
+import matplotlib.transforms as transforms
 
 def debug_plot_baseline_windows(grouped_cells, cols, fs=20000, max_cells_to_search=20):
     """
@@ -338,7 +340,7 @@ def plot_methodology_validation(grouped_cells, cols, fs=20000,
     ax2 = fig.add_subplot(gs[1])
     
     # Pick the first "Long" event found (to show clean baseline)
-    target_idx = 0
+    target_idx = 2
     # Try to find a long event that isn't the very start of the file
     for i in range(1, len(contacts_arr)):
         if (contacts_arr[i] - contacts_arr[i-1]) > 0.200:
@@ -435,6 +437,184 @@ def plot_methodology_validation(grouped_cells, cols, fs=20000,
     print(f"Validation plot saved to: {save_path}")
     plt.close()
 
+
+def plot_neuroscience_style_validation(grouped_cells, cols, fs=20000, 
+                                       target_index=0, target_type=None, 
+                                       save_dir="."):
+    """
+    Generates a publication-quality trace plot matching the reference style:
+    - Top: Whisker Angle (Green)
+    - Bottom: Vm (Color-coded by cell type)
+    - Vertical bars indicating Active Touch onsets.
+    - Floating scale bars (No box axes).
+    """
+    
+    # --- 1. CONFIGURATION ---
+    # Colors matching standard literature (and your image)
+    colors = {
+        'SST': '#E69F00',  # Orange/Gold
+        'PV':  '#D55E00',  # Vermillion/Red
+        'VIP': '#0072B2',  # Blue
+        'EXC': 'black',    # Black/Grey
+        'Whisker': '#009E73' # Green
+    }
+    
+    # --- 2. SEARCH LOGIC (Same as before) ---
+    print(f"Searching for match #{target_index + 1} (Type: {target_type if target_type else 'Any'})...")
+    
+    matches_found = 0
+    found_sweep = None
+    contacts_arr = None
+    cell_id_str = ""
+    cell_type_str = ""
+
+    for (mouse, count), cell_df in grouped_cells:
+        current_type = cell_df[cols['type']].iloc[0]
+        if target_type is not None and target_type != current_type:
+            continue
+
+        at_sweeps = cell_df[cell_df[cols['sweep_type']].astype(str).str.contains('active touch', case=False)]
+        
+        sweep_candidate = None
+        
+        for _, sweep in at_sweeps.iterrows():
+            contacts = sweep[cols['contacts']]
+            if contacts is None: continue
+            contacts = np.array(contacts)
+            if contacts.ndim == 1: contacts = contacts.reshape(1, -1)
+            
+            # Simple check: enough contacts to look "busy" like the image
+            if len(contacts) > 3:
+                sweep_candidate = sweep
+                contacts_arr = contacts[:, 0]
+                break 
+        
+        if sweep_candidate is not None:
+            if matches_found == target_index:
+                found_sweep = sweep_candidate
+                cell_id_str = f"{mouse} Cell {count}"
+                cell_type_str = current_type
+                break
+            else:
+                matches_found += 1
+
+    if found_sweep is None:
+        print("Target cell not found.")
+        return
+
+    # --- 3. DATA PREP ---
+    raw_vm = np.array(found_sweep[cols['vm']])
+    
+    # Try to grab whisker angle. If missing, make a flat dummy line.
+    if 'whisker_angle' in cols and cols['whisker_angle'] in found_sweep:
+        raw_wh = np.array(found_sweep[cols['whisker_angle']])
+        # Downsample whisker if it's at same fs as Vm (usually whisker is 500Hz, Vm 20kHz)
+        # Assuming they are already aligned or same length for plotting:
+        if len(raw_wh) != len(raw_vm):
+            # Simple resize for visualization only
+            from scipy.ndimage import zoom
+            zoom_factor = len(raw_vm) / len(raw_wh)
+            raw_wh = zoom(raw_wh, zoom_factor)
+    else:
+        raw_wh = np.zeros_like(raw_vm)
+
+    # Filter Vm for cleaner plot (remove high freq noise)
+    sos = bessel(4, 1000, 'low', fs=fs, output='sos') # 1kHz filter
+    filt_vm = sosfilt(sos, raw_vm)
+    
+    t = np.arange(len(filt_vm)) / fs
+
+    # --- 4. PLOTTING ---
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 6), sharex=True, 
+                                   gridspec_kw={'height_ratios': [1, 2], 'hspace': 0.05})
+    
+    # Remove standard axes (Frames)
+    for ax in [ax1, ax2]:
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.spines['left'].set_visible(False)
+        ax.spines['bottom'].set_visible(False)
+        ax.set_yticks([])
+        ax.set_xticks([])
+
+    # A. WHISKER TRACE (Top)
+    ax1.plot(t, raw_wh, color=colors['Whisker'], lw=1)
+    ax1.text(-0.02, 0.5, "Whisker\nangle", transform=ax1.transAxes, 
+             color=colors['Whisker'], ha='right', va='center', fontsize=12, fontweight='bold')
+
+    # B. VM TRACE (Bottom)
+    c_vm = colors.get(cell_type_str, 'black')
+    ax2.plot(t, filt_vm * 1000, color=c_vm, lw=0.8) # Convert to mV
+    
+    label_y = np.percentile(filt_vm*1000, 50)
+    ax2.text(-0.02, 0.5, f"{cell_id_str}\n{cell_type_str}\nVm", transform=ax2.transAxes, 
+             color=c_vm, ha='right', va='center', fontsize=12, fontweight='bold')
+
+    # C. CONTACT LINES (Grey vertical bars)
+    # Span across both axes
+    trans = transforms.blended_transform_factory(ax2.transData, fig.transFigure)
+    
+    for onset in contacts_arr:
+        # Check if onset is within plot range
+        if onset > t[-1]: continue
+        
+        # Plot grey bar spanning both subplots visual area
+        # We use a trick: axvline on both, or a rect. 
+        # Simpler: just lines on both axes
+        ax1.axvline(onset, color='grey', alpha=0.4, lw=2)
+        ax2.axvline(onset, color='grey', alpha=0.4, lw=2)
+    
+    # Label "Active touch" at the bottom
+    ax2.text(0, -0.1, "Active\ntouch", transform=ax2.transAxes, 
+             color='grey', ha='right', va='top', fontsize=12)
+    # Add little ticks at the bottom for contacts
+    for onset in contacts_arr:
+        if onset > t[-1]: continue
+        ax2.plot([onset, onset], [np.min(filt_vm*1000)-2, np.min(filt_vm*1000)-6], 
+                 color='grey', lw=1.5, clip_on=False)
+
+    # --- 5. SCALE BARS (The "Floating" Look) ---
+    
+    # Time Scale (Horizontal) - e.g., 2 seconds
+    # Place it bottom right
+    bar_len_s = 2.0
+    x_start = t[-1] - bar_len_s - 1.0 # 1s padding from right
+    y_start_vm = np.min(filt_vm*1000) + 5
+    
+    ax2.plot([x_start, x_start + bar_len_s], [y_start_vm, y_start_vm], color='black', lw=2)
+    ax2.text(x_start + bar_len_s/2, y_start_vm - 2, "2 s", ha='center', va='top', fontsize=10)
+
+    # Vm Scale (Vertical) - e.g., 10 mV
+    bar_len_mv = 10
+    x_scale_vm = x_start + bar_len_s + 0.2
+    y_scale_vm_btm = y_start_vm + 5
+    
+    ax2.plot([x_scale_vm, x_scale_vm], [y_scale_vm_btm, y_scale_vm_btm + bar_len_mv], 
+             color=c_vm, lw=2)
+    ax2.text(x_scale_vm + 0.05, y_scale_vm_btm + bar_len_mv/2, "10 mV", 
+             color=c_vm, rotation=0, va='center', fontsize=10)
+
+    # Whisker Scale (Vertical) - e.g., 10 degrees
+    # We need range of whisker to place this well
+    wh_range = np.max(raw_wh) - np.min(raw_wh)
+    if wh_range == 0:
+        wh_range = 1 # avoid div/0
+    
+    bar_len_deg = 10 
+    x_scale_wh = x_scale_vm
+    y_scale_wh_btm = np.mean(raw_wh)
+    
+    ax1.plot([x_scale_wh, x_scale_wh], [y_scale_wh_btm, y_scale_wh_btm + bar_len_deg], 
+             color=colors['Whisker'], lw=2)
+    ax1.text(x_scale_wh + 0.05, y_scale_wh_btm + bar_len_deg/2, "10°", 
+             color=colors['Whisker'], rotation=0, va='center', fontsize=10)
+
+    # Save
+    import os
+    save_path = os.path.join(save_dir, f"trace_validation_{cell_id_str.replace(' ', '_')}.png")
+    plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    print(f"Neuroscience style plot saved to: {save_path}")
+    plt.close()
 
 
 def plot_pv_coupling_diagnostic(df_metrics):
@@ -727,3 +907,199 @@ def generate_main_figures(df_metrics, trace_storage):
     plt.tight_layout()
     plt.savefig(os.path.join(config.FIG_DIR, "fig_slope_adaptation_epsp_only.png"), dpi=300)
     plt.close()
+
+
+# import os
+# import numpy as np
+# import matplotlib.pyplot as plt
+# import seaborn as sns
+# from scipy import stats
+
+# def formatting_tweaks(ax, title=None, x_label=None, y_label=None):
+#     """Helper to apply consistent scientific styling to any axis."""
+#     sns.despine(ax=ax, trim=False)
+#     if title: ax.set_title(title, fontweight='bold', pad=10)
+#     if x_label: ax.set_xlabel(x_label, fontsize=12)
+#     if y_label: ax.set_ylabel(y_label, fontsize=12)
+#     ax.tick_params(axis='both', which='major', labelsize=10)
+#     ax.grid(True, linestyle=':', alpha=0.4)
+
+# def generate_main_figures(df_metrics, trace_storage, config):
+#     if df_metrics.empty:
+#         return
+
+#     # --- 0. Global Style Setup ---
+#     # This fixes the "microscopic font" issue globally
+#     sns.set_context("notebook", font_scale=1.2)
+#     sns.set_style("ticks")
+    
+#     colors = config.COLORS
+#     time_axis = config.TIME_AXIS
+    
+#     # Ensure output directory exists
+#     os.makedirs(config.FIG_DIR, exist_ok=True)
+
+#     # --- 1. Standard Waveforms with SEM (Grand Average) ---
+#     plt.figure(figsize=(10, 6))
+#     ax = plt.gca()
+    
+#     for ctype in ['EXC', 'PV', 'SST', 'VIP']:
+#         if ctype not in trace_storage: continue
+#         traces = trace_storage[ctype]['long']
+        
+#         if len(traces) > 0:
+#             # Convert list of arrays to matrix
+#             stack = np.vstack(traces) * 1000 # Convert to mV
+#             mean_trace = np.mean(stack, axis=0)
+#             sem_trace = stats.sem(stack, axis=0) # Standard Error of Mean
+            
+#             # Plot Mean
+#             ax.plot(time_axis, mean_trace, color=colors[ctype], 
+#                     label=f"{ctype} (n={len(traces)})", linewidth=2.5)
+            
+#             # Shade the error (SEM) - crucial for showing variance
+#             ax.fill_between(time_axis, mean_trace - sem_trace, mean_trace + sem_trace,
+#                             color=colors[ctype], alpha=0.15, edgecolor=None)
+    
+#     ax.axvline(0, color='#444444', linestyle='--', linewidth=1.5, alpha=0.8, label='Touch Onset')
+#     formatting_tweaks(ax, title="Active Touch Response Dynamics (Grand Average)", 
+#                       x_label="Time from Contact (ms)", y_label="Vm Change (mV)")
+#     ax.set_xlim(-20, 60)
+#     ax.legend(frameon=False, loc='upper left')
+    
+#     plt.tight_layout()
+#     plt.savefig(os.path.join(config.FIG_DIR, "fig1_waveforms_long_ici.png"), dpi=300)
+#     plt.close()
+
+#     # --- 2. Boxplots with Raw Data Points (Honesty check) ---
+#     fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+    
+#     # Latency
+#     sns.boxplot(x='Cell_Type', y='Time_to_Peak_ms', data=df_metrics,
+#                 palette=colors, showfliers=False, ax=axes[0], width=0.5, boxprops={'alpha': 0.6})
+#     # Add stripplot to show the N=2 for PV clearly
+#     sns.stripplot(x='Cell_Type', y='Time_to_Peak_ms', data=df_metrics,
+#                   color='black', size=4, alpha=0.6, jitter=True, ax=axes[0])
+#     formatting_tweaks(axes[0], title="Response Latency (Time to Peak)", y_label="Time (ms)")
+
+#     # Slope
+#     sns.boxplot(x='Cell_Type', y='Max_Slope', data=df_metrics,
+#                 palette=colors, showfliers=False, ax=axes[1], width=0.5, boxprops={'alpha': 0.6})
+#     sns.stripplot(x='Cell_Type', y='Max_Slope', data=df_metrics,
+#                   color='black', size=4, alpha=0.6, jitter=True, ax=axes[1])
+#     formatting_tweaks(axes[1], title="Response Speed (Max Slope)", y_label="Slope (V/s)")
+    
+#     plt.tight_layout()
+#     plt.savefig(os.path.join(config.FIG_DIR, "fig2_latency_and_slope.png"), dpi=300)
+#     plt.close()
+
+#     # --- 3. Latency Jitter ---
+#     plt.figure(figsize=(7, 5))
+#     ax = plt.gca()
+#     sns.boxplot(x='Cell_Type', y='Latency_Jitter_ms', data=df_metrics,
+#                 palette=colors, showfliers=False, width=0.5, boxprops={'alpha': 0.6}, ax=ax)
+#     sns.stripplot(x='Cell_Type', y='Latency_Jitter_ms', data=df_metrics,
+#                   color='k', alpha=0.5, size=5, ax=ax)
+    
+#     formatting_tweaks(ax, title="Latency Jitter (Precision)", y_label="SD of Time-to-Peak (ms)")
+#     plt.tight_layout()
+#     plt.savefig(os.path.join(config.FIG_DIR, "fig3_latency_jitter.png"), dpi=300)
+#     plt.close()
+
+#     # --- 4. Effect of ICI (Paired) ---
+#     # NOTE: Boxplots are bad for paired data. A slopegraph or connected dots is better, 
+#     # but sticking to boxplots for summary, let's make them cleaner.
+#     df_ici = df_metrics.melt(
+#         id_vars=['Cell_Type', 'Cell_ID'],
+#         value_vars=['Time_to_Peak_ms', 'Time_to_Peak_short_ms'],
+#         var_name='ICI_condition', value_name='Time_to_Peak_cond_ms'
+#     ).dropna()
+    
+#     df_ici['ICI_condition'] = df_ici['ICI_condition'].map(
+#         {'Time_to_Peak_ms': 'Long', 'Time_to_Peak_short_ms': 'Short'}
+#     )
+
+#     if not df_ici.empty:
+#         plt.figure(figsize=(10, 5))
+#         ax = plt.gca()
+#         sns.boxplot(x='Cell_Type', y='Time_to_Peak_cond_ms', hue='ICI_condition', 
+#                     data=df_ici, showfliers=False, palette="Blues", ax=ax)
+#         formatting_tweaks(ax, title="Effect of Inter-Contact Interval on Latency", y_label="Latency (ms)")
+#         ax.legend(title="ICI Condition", frameon=False)
+#         plt.tight_layout()
+#         plt.savefig(os.path.join(config.FIG_DIR, "fig4_ici_effect_latency.png"), dpi=300)
+#         plt.close()
+
+#     # --- 11. Waveform Comparison (The "Money" Plot for Adaptation) ---
+#     # We prioritize this visual because it shows the mechanism
+#     fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+#     axes = axes.flatten()
+    
+#     for i, ctype in enumerate(['EXC', 'PV', 'SST', 'VIP']):
+#         ax = axes[i]
+#         if ctype not in trace_storage: 
+#             ax.axis('off')
+#             continue
+
+#         traces_l = trace_storage[ctype]['long']
+#         traces_s = trace_storage[ctype]['short']
+        
+#         if len(traces_l) > 0 and len(traces_s) > 0:
+#             # Process Long
+#             stack_l = np.vstack(traces_l) * 1000
+#             mean_l = np.mean(stack_l, axis=0)
+#             sem_l = stats.sem(stack_l, axis=0)
+            
+#             # Process Short
+#             stack_s = np.vstack(traces_s) * 1000
+#             mean_s = np.mean(stack_s, axis=0)
+#             sem_s = stats.sem(stack_s, axis=0)
+            
+#             # Plot Long (Solid, darker)
+#             ax.plot(time_axis, mean_l, color=colors[ctype], linestyle='-', linewidth=2.5, label='Long ICI')
+#             ax.fill_between(time_axis, mean_l - sem_l, mean_l + sem_l, color=colors[ctype], alpha=0.1)
+
+#             # Plot Short (Dashed, same color but maybe lighter or just dashed)
+#             ax.plot(time_axis, mean_s, color='gray', linestyle='--', linewidth=2, label='Short ICI')
+#             # We use gray for Short ICI to create contrast without color clashing
+            
+#             # Highlight difference
+#             ax.fill_between(time_axis, mean_l, mean_s, color=colors[ctype], alpha=0.05)
+            
+#             formatting_tweaks(ax, title=f"{ctype} Adaptation", x_label="Time (ms)", y_label="Vm (mV)")
+#             ax.set_xlim(-10, 80)
+#             if i == 0: ax.legend(frameon=False) # Only legend on first plot to save space
+            
+#     plt.tight_layout()
+#     plt.savefig(os.path.join(config.FIG_DIR, "fig14_waveform_comparison.png"), dpi=300)
+#     plt.close()
+
+#     # --- 13. Amplitude Adaptation Ratio (The "Facilitation" Story) ---
+#     plt.figure(figsize=(7, 6))
+#     ax = plt.gca()
+    
+#     df_amp_ratio = df_metrics.dropna(subset=['Amp_Adaptation_Ratio'])
+#     # Filter extreme outliers for plotting clarity
+#     df_amp_ratio = df_amp_ratio[df_amp_ratio['Amp_Adaptation_Ratio'].between(-2, 5)]
+    
+#     # Add reference line FIRST so it is behind data
+#     ax.axhline(1.0, color='#555555', linestyle='--', linewidth=1.5, zorder=0, label='No Adaptation')
+    
+#     sns.boxplot(x='Cell_Type', y='Amp_Adaptation_Ratio', data=df_amp_ratio, 
+#                 palette=colors, showfliers=False, ax=ax, width=0.5, boxprops={'alpha': 0.6})
+#     sns.stripplot(x='Cell_Type', y='Amp_Adaptation_Ratio', data=df_amp_ratio,
+#                   color='k', size=4, alpha=0.6, jitter=True, ax=ax)
+    
+#     # Annotate the SST Facilitation
+#     sst_median = df_amp_ratio[df_amp_ratio['Cell_Type']=='SST']['Amp_Adaptation_Ratio'].median()
+#     if not np.isnan(sst_median) and sst_median > 1.0:
+#         ax.text(2, sst_median + 0.2, "Facilitation", ha='center', color=colors['SST'], fontweight='bold')
+    
+#     formatting_tweaks(ax, title="Functional Switch: Depression vs Facilitation", 
+#                       y_label="Adaptation Ratio (Short / Long)")
+    
+#     plt.tight_layout()
+#     plt.savefig(os.path.join(config.FIG_DIR, "fig13_amplitude_ratio.png"), dpi=300)
+#     plt.close()
+    
+#     print("\nHigh-quality figures generated successfully.")

@@ -15,6 +15,7 @@ def load_and_group_cells(file_path):
     df = pd.read_pickle(file_path)
     
     all_cols = df.columns.tolist()
+    print(f"Columns in data: {all_cols}")
     contact_col = next((c for c in all_cols if 'Contact' in c and 'Passive' not in c), None)
     vm_col = next((c for c in all_cols if 'Membrane' in c or 'Vm' in c), None)
     type_col = next((c for c in all_cols if 'Sweep_Type' in c or 'Type' in c), 'Sweep_Type')
@@ -25,7 +26,8 @@ def load_and_group_cells(file_path):
         'type': 'Cell_Type',
         'sweep_type': 'Sweep_Type',
         'vm': vm_col,
-        'contacts': contact_col 
+        'contacts': contact_col,
+        'whisker_angle': 'Sweep_WhiskerAngle'
     }
 
     grouped_cells = df.groupby([cols['mouse'], cols['counter']])

@@ -67,6 +67,7 @@ def run_classifier_analysis(df_metrics, allowed_classes=None, suffix="", use_bay
     # 5. Minimum sample check
     counts = df_clf['Cell_Type'].value_counts()
     valid_types = counts[counts >= 5].index.tolist()
+    
     df_clf = df_clf[df_clf['Cell_Type'].isin(valid_types)]
 
     if len(valid_types) < 2:
