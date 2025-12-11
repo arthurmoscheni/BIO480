@@ -42,7 +42,7 @@ def main():
     # 3. QC Plots
     debug_plot_baseline_windows(grouped_cells, columns)
     plot_methodology_validation(grouped_cells, columns, target_index=3, target_type='SST')
-    plot_neuroscience_style_validation(grouped_cells, columns, target_index=3, target_type='EXC')
+    plot_neuroscience_style_validation(grouped_cells, columns, target_index=4, target_type='SST')
 
     # 4. Main Figures
     generate_main_figures(df_metrics, trace_storage)
@@ -52,13 +52,13 @@ def main():
     
     # 5. Classifiers
     # 4-Class
-    use_bayes_search = False
+    use_bayes_search = True
     #run_classifier_analysis(df_metrics, suffix="", use_bayes_search=use_bayes_search)
-    # #3-Class (EXC, PV, SST)
-    # run_classifier_analysis(df_metrics, allowed_classes=['EXC', 'PV', 'SST'], suffix="_3class", use_bayes_search=use_bayes_search)
-    # #2-Class (EXC vs. INH)
-    # run_classifier_analysis(df_metrics, allowed_classes=['EXC', 'SST'], suffix="_2class", use_bayes_search=use_bayes_search)
-    # #6. Stats Summary
+    #3-Class (EXC, PV, SST)
+    run_classifier_analysis(df_metrics, allowed_classes=['EXC', 'PV', 'SST'], suffix="_3class", use_bayes_search=use_bayes_search)
+    #2-Class (EXC vs. INH)
+    run_classifier_analysis(df_metrics, allowed_classes=['EXC', 'SST'], suffix="_2class", use_bayes_search=use_bayes_search)
+    #6. Stats Summary
     print("\n--- Summary Statistics ---")
     print(df_metrics.groupby('Cell_Type')[['Slope_Adaptation_Ratio', 'EI_Coupling_Strength']].median())
 

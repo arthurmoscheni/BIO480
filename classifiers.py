@@ -37,8 +37,9 @@ def run_classifier_analysis(df_metrics, allowed_classes=None, suffix="", use_bay
     features = [
         'Time_to_Peak_ms',
         'Max_Slope',
-        'Latency_Jitter_ms',
-        'Slope_Adaptation_Ratio',
+        # 'Latency_Jitter_ms',
+        # 'Slope_Adaptation_Ratio',
+        'Kinetics_Adaptation_Ratio',
         'Amp_Adaptation_Ratio',
         'EI_Coupling_Strength'
     ]
@@ -220,7 +221,7 @@ def run_classifier_analysis(df_metrics, allowed_classes=None, suffix="", use_bay
     plt.figure(figsize=(6, 5))
     sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", 
                 xticklabels=class_names, yticklabels=class_names)
-    plt.title(f"Confusion Matrix ({best_model}) {suffix}")
+    plt.title(f"Confusion Matrix ({best_model})")
     plt.ylabel('True')
     plt.xlabel('Predicted')
     plt.tight_layout()

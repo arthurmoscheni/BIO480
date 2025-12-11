@@ -191,7 +191,7 @@ def run_full_analysis(grouped_cells, columns, config):
         'Time_to_Peak_ms': [], 'Latency_Jitter_ms': [], 'Max_Slope': [], 
         'Peak_Amp_V': [], 'Peak_Amp_short_V': [], 'Amp_Adaptation_Ratio': [], 
         'Time_to_Peak_short_ms': [], 'Max_Slope_short': [], 'Delta_FR_0_50_Hz': [],
-        'Slope_Adaptation_Ratio': [], 'EI_Coupling_Strength': [], 'Baseline_SD_long': []
+        'Slope_Adaptation_Ratio': [], 'EI_Coupling_Strength': [], 'Baseline_SD_long': [], 'Kinetics_Adaptation_Ratio': []
     }
 
     trace_storage = {
@@ -275,12 +275,22 @@ def run_full_analysis(grouped_cells, columns, config):
                     if abs(mean_amp) > 1e-6:
                         amp_ratio = abs(mean_amp_short) / abs(mean_amp)
                     else: amp_ratio = np.nan
+
+                    # Normalized Slope (Pseudo-Rise Time)
+                    # Units: (V/s) / V = 1/s. Higher number = Faster kinetics relative to size.
+                    norm_slope_long = mean_slope / mean_amp 
+                    norm_slope_short = mean_slope_short / mean_amp_short
+
+                    # Kinetics Adaptation Ratio
+                    # > 1.0 means it got faster. < 1.0 means it got slower (smeared out).
+                    kinetics_ratio = norm_slope_short / norm_slope_long
                 else:
                     mean_ttp_short = np.nan
                     mean_slope_short = np.nan
                     mean_amp_short = np.nan
                     slope_ratio = np.nan
                     amp_ratio = np.nan
+                    kinetics_ratio = np.nan
 
                 # EI Coupling Strength
                 mean_amp_mv = mean_amp * 1000 
@@ -306,6 +316,7 @@ def run_full_analysis(grouped_cells, columns, config):
                 cell_metrics['Amp_Adaptation_Ratio'].append(amp_ratio)
                 cell_metrics['EI_Coupling_Strength'].append(ei_coupling)
                 cell_metrics['Baseline_SD_long'].append(mean_baseline_sd)
+                cell_metrics['Kinetics_Adaptation_Ratio'].append(kinetics_ratio)
 
                 processed_count += 1
                 if processed_count % 20 == 0: print(f"Processed {processed_count} cells...")
@@ -316,59 +327,65 @@ def run_full_analysis(grouped_cells, columns, config):
     print(f"Total contact events analyzed: {total_events}\n")
     
     df_results = pd.DataFrame(cell_metrics)
-    
-    # # --- Statistical Tests ---
-    # print("Running Statistical Tests...\n")
-    
-    # # 1. Adaptation (Paired Test: Long vs Short within Cell Types)
-    # print("--- Adaptation Analysis (Paired t-test: Long vs. Short) ---")
-    
-    # for ctype in df_results['Cell_Type'].unique():
-    #     # Filter for cells that have valid short ICI data
-    #     subset = df_results[(df_results['Cell_Type'] == ctype) & 
-    #                         (df_results['Peak_Amp_short_V'].notna())]
-        
-    #     if len(subset) > 2:
-    #         # We use ttest_rel for paired samples
-    #         stat_amp, p_amp = stats.ttest_rel(subset['Peak_Amp_V'], subset['Peak_Amp_short_V'])
-    #         stat_slope, p_slope = stats.ttest_rel(subset['Max_Slope'], subset['Max_Slope_short'])
-            
-    #         print(f"[{ctype}] (n={len(subset)})")
-    #         print(f"  Amplitude: p={p_amp:.4e} {'*' if p_amp < 0.05 else ''}")
-    #         print(f"  Slope:     p={p_slope:.4e} {'*' if p_slope < 0.05 else ''}")
-    #     else:
-    #         print(f"[{ctype}] Not enough data for paired test (n={len(subset)})")
 
-    # print("\n" + "-"*40 + "\n")
+    #print kinematics ratio median per cell type
+    if 'Kinetics_Adaptation_Ratio' in df_results.columns:
+        print("Median Kinetics Adaptation Ratio by Cell Type:")
+        print(df_results.groupby('Cell_Type')['Kinetics_Adaptation_Ratio'].median())
 
-    # # 2. Cell Type Differences (Kruskal-Wallis)
-    # # Non-parametric ANOVA equivalent for comparing multiple independent groups
-    # metrics_to_compare = [
-    #     'Peak_Amp_V', 'Max_Slope', 'Time_to_Peak_ms', 
-    #     'Delta_FR_0_50_Hz', 'Amp_Adaptation_Ratio'
-    # ]
     
-    # print("--- Cell Type Comparisons (Kruskal-Wallis) ---")
+    # --- Statistical Tests ---
+    print("Running Statistical Tests...\n")
     
-    # for metric in metrics_to_compare:
-    #     # Prepare groups
-    #     groups = []
-    #     labels = []
-    #     for ctype in df_results['Cell_Type'].unique():
-    #         data = df_results[df_results['Cell_Type'] == ctype][metric].dropna()
-    #         if len(data) > 0:
-    #             groups.append(data)
-    #             labels.append(ctype)
+    # 1. Adaptation (Paired Test: Long vs Short within Cell Types)
+    print("--- Adaptation Analysis (Paired t-test: Long vs. Short) ---")
+    
+    for ctype in df_results['Cell_Type'].unique():
+        # Filter for cells that have valid short ICI data
+        subset = df_results[(df_results['Cell_Type'] == ctype) & 
+                            (df_results['Peak_Amp_short_V'].notna())]
         
-    #     if len(groups) > 1:
-    #         stat, p_val = stats.kruskal(*groups)
-    #         print(f"{metric}: p={p_val:.4e} {'*' if p_val < 0.05 else ''}")
+        if len(subset) > 2:
+            # We use ttest_rel for paired samples
+            stat_amp, p_amp = stats.ttest_rel(subset['Peak_Amp_V'], subset['Peak_Amp_short_V'])
+            stat_slope, p_slope = stats.ttest_rel(subset['Max_Slope'], subset['Max_Slope_short'])
             
-    #         # Simple mean display for quick interpretation if significant
-    #         if p_val < 0.05:
-    #             means = [f"{lbl}:{g.mean():.2e}" for lbl, g in zip(labels, groups)]
-    #             print(f"  Means -> {', '.join(means)}")
-    #     else:
-    #         print(f"{metric}: Not enough groups to compare.")
+            print(f"[{ctype}] (n={len(subset)})")
+            print(f"  Amplitude: p={p_amp:.4e} {'*' if p_amp < 0.05 else ''}")
+            print(f"  Slope:     p={p_slope:.4e} {'*' if p_slope < 0.05 else ''}")
+        else:
+            print(f"[{ctype}] Not enough data for paired test (n={len(subset)})")
+
+    print("\n" + "-"*40 + "\n")
+
+    # 2. Cell Type Differences (Kruskal-Wallis)
+    # Non-parametric ANOVA equivalent for comparing multiple independent groups
+    metrics_to_compare = [
+        'Peak_Amp_V', 'Max_Slope', 'Time_to_Peak_ms', 
+        'Delta_FR_0_50_Hz', 'Amp_Adaptation_Ratio'
+    ]
+    
+    print("--- Cell Type Comparisons (Kruskal-Wallis) ---")
+    
+    for metric in metrics_to_compare:
+        # Prepare groups
+        groups = []
+        labels = []
+        for ctype in df_results['Cell_Type'].unique():
+            data = df_results[df_results['Cell_Type'] == ctype][metric].dropna()
+            if len(data) > 0:
+                groups.append(data)
+                labels.append(ctype)
+        
+        if len(groups) > 1:
+            stat, p_val = stats.kruskal(*groups)
+            print(f"{metric}: p={p_val:.4e} {'*' if p_val < 0.05 else ''}")
+            
+            # Simple mean display for quick interpretation if significant
+            if p_val < 0.05:
+                means = [f"{lbl}:{g.mean():.2e}" for lbl, g in zip(labels, groups)]
+                print(f"  Means -> {', '.join(means)}")
+        else:
+            print(f"{metric}: Not enough groups to compare.")
 
     return df_results, trace_storage

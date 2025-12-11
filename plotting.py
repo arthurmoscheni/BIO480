@@ -438,19 +438,199 @@ def plot_methodology_validation(grouped_cells, cols, fs=20000,
     plt.close()
 
 
+# def plot_neuroscience_style_validation(grouped_cells, cols, fs=20000, 
+#                                        target_index=0, target_type=None, 
+#                                        save_dir="."):
+#     """
+#     Generates a publication-quality trace plot matching the reference style:
+#     - Top: Whisker Angle (Green)
+#     - Bottom: Vm (Color-coded by cell type)
+#     - Vertical bars indicating Active Touch onsets.
+#     - Floating scale bars (No box axes).
+#     """
+    
+#     # --- 1. CONFIGURATION ---
+#     # Colors matching standard literature (and your image)
+#     colors = {
+#         'SST': '#E69F00',  # Orange/Gold
+#         'PV':  '#D55E00',  # Vermillion/Red
+#         'VIP': '#0072B2',  # Blue
+#         'EXC': 'black',    # Black/Grey
+#         'Whisker': '#009E73' # Green
+#     }
+    
+#     # --- 2. SEARCH LOGIC (Same as before) ---
+#     print(f"Searching for match #{target_index + 1} (Type: {target_type if target_type else 'Any'})...")
+    
+#     matches_found = 0
+#     found_sweep = None
+#     contacts_arr = None
+#     cell_id_str = ""
+#     cell_type_str = ""
+
+#     for (mouse, count), cell_df in grouped_cells:
+#         current_type = cell_df[cols['type']].iloc[0]
+#         if target_type is not None and target_type != current_type:
+#             continue
+
+#         at_sweeps = cell_df[cell_df[cols['sweep_type']].astype(str).str.contains('active touch', case=False)]
+        
+#         sweep_candidate = None
+        
+#         for _, sweep in at_sweeps.iterrows():
+#             contacts = sweep[cols['contacts']]
+#             if contacts is None: continue
+#             contacts = np.array(contacts)
+#             if contacts.ndim == 1: contacts = contacts.reshape(1, -1)
+            
+#             # Simple check: enough contacts to look "busy" like the image
+#             if len(contacts) > 3:
+#                 sweep_candidate = sweep
+#                 contacts_arr = contacts[:, 0]
+#                 break 
+        
+#         if sweep_candidate is not None:
+#             if matches_found == target_index:
+#                 found_sweep = sweep_candidate
+#                 cell_id_str = f"{mouse} Cell {count}"
+#                 cell_type_str = current_type
+#                 break
+#             else:
+#                 matches_found += 1
+
+#     if found_sweep is None:
+#         print("Target cell not found.")
+#         return
+
+#     # --- 3. DATA PREP ---
+#     raw_vm = np.array(found_sweep[cols['vm']])
+    
+#     # Try to grab whisker angle. If missing, make a flat dummy line.
+#     if 'whisker_angle' in cols and cols['whisker_angle'] in found_sweep:
+#         raw_wh = np.array(found_sweep[cols['whisker_angle']])
+#         # Downsample whisker if it's at same fs as Vm (usually whisker is 500Hz, Vm 20kHz)
+#         # Assuming they are already aligned or same length for plotting:
+#         if len(raw_wh) != len(raw_vm):
+#             # Simple resize for visualization only
+#             from scipy.ndimage import zoom
+#             zoom_factor = len(raw_vm) / len(raw_wh)
+#             raw_wh = zoom(raw_wh, zoom_factor)
+#     else:
+#         raw_wh = np.zeros_like(raw_vm)
+
+#     # Filter Vm for cleaner plot (remove high freq noise)
+#     sos = bessel(4, 1000, 'low', fs=fs, output='sos') # 1kHz filter
+#     filt_vm = sosfilt(sos, raw_vm)
+    
+#     t = np.arange(len(filt_vm)) / fs
+
+#     # --- 4. PLOTTING ---
+#     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 6), sharex=True, 
+#                                    gridspec_kw={'height_ratios': [1, 2], 'hspace': 0.05})
+    
+#     # Remove standard axes (Frames)
+#     for ax in [ax1, ax2]:
+#         ax.spines['top'].set_visible(False)
+#         ax.spines['right'].set_visible(False)
+#         ax.spines['left'].set_visible(False)
+#         ax.spines['bottom'].set_visible(False)
+#         ax.set_yticks([])
+#         ax.set_xticks([])
+
+#     # A. WHISKER TRACE (Top)
+#     ax1.plot(t, raw_wh, color=colors['Whisker'], lw=1)
+#     ax1.text(-0.02, 0.5, "Whisker\nangle", transform=ax1.transAxes, 
+#              color=colors['Whisker'], ha='right', va='center', fontsize=12, fontweight='bold')
+
+#     # B. VM TRACE (Bottom)
+#     c_vm = colors.get(cell_type_str, 'black')
+#     ax2.plot(t, filt_vm * 1000, color=c_vm, lw=0.8) # Convert to mV
+    
+#     label_y = np.percentile(filt_vm*1000, 50)
+#     ax2.text(-0.02, 0.5, f"{cell_id_str}\n{cell_type_str}\nVm", transform=ax2.transAxes, 
+#              color=c_vm, ha='right', va='center', fontsize=12, fontweight='bold')
+
+#     # C. CONTACT LINES (Grey vertical bars)
+#     # Span across both axes
+#     trans = transforms.blended_transform_factory(ax2.transData, fig.transFigure)
+    
+#     for onset in contacts_arr:
+#         # Check if onset is within plot range
+#         if onset > t[-1]: continue
+        
+#         # Plot grey bar spanning both subplots visual area
+#         # We use a trick: axvline on both, or a rect. 
+#         # Simpler: just lines on both axes
+#         ax1.axvline(onset, color='grey', alpha=0.4, lw=2)
+#         ax2.axvline(onset, color='grey', alpha=0.4, lw=2)
+    
+#     # Label "Active touch" at the bottom
+#     ax2.text(0, -0.1, "Active\ntouch", transform=ax2.transAxes, 
+#              color='grey', ha='right', va='top', fontsize=12)
+#     # Add little ticks at the bottom for contacts
+#     for onset in contacts_arr:
+#         if onset > t[-1]: continue
+#         ax2.plot([onset, onset], [np.min(filt_vm*1000)-2, np.min(filt_vm*1000)-6], 
+#                  color='grey', lw=1.5, clip_on=False)
+
+#     # --- 5. SCALE BARS (The "Floating" Look) ---
+    
+#     # Time Scale (Horizontal) - e.g., 2 seconds
+#     # Place it bottom right
+#     bar_len_s = 2.0
+#     x_start = t[-1] - bar_len_s - 1.0 # 1s padding from right
+#     y_start_vm = np.min(filt_vm*1000) + 5
+    
+#     ax2.plot([x_start, x_start + bar_len_s], [y_start_vm, y_start_vm], color='black', lw=2)
+#     ax2.text(x_start + bar_len_s/2, y_start_vm - 2, "2 s", ha='center', va='top', fontsize=10)
+
+#     # Vm Scale (Vertical) - e.g., 10 mV
+#     bar_len_mv = 10
+#     x_scale_vm = x_start + bar_len_s + 0.2
+#     y_scale_vm_btm = y_start_vm + 5
+    
+#     ax2.plot([x_scale_vm, x_scale_vm], [y_scale_vm_btm, y_scale_vm_btm + bar_len_mv], 
+#              color=c_vm, lw=2)
+#     ax2.text(x_scale_vm + 0.05, y_scale_vm_btm + bar_len_mv/2, "10 mV", 
+#              color=c_vm, rotation=0, va='center', fontsize=10)
+
+#     # Whisker Scale (Vertical) - e.g., 10 degrees
+#     # We need range of whisker to place this well
+#     wh_range = np.max(raw_wh) - np.min(raw_wh)
+#     if wh_range == 0:
+#         wh_range = 1 # avoid div/0
+    
+#     bar_len_deg = 10 
+#     x_scale_wh = x_scale_vm
+#     y_scale_wh_btm = np.mean(raw_wh)
+    
+#     ax1.plot([x_scale_wh, x_scale_wh], [y_scale_wh_btm, y_scale_wh_btm + bar_len_deg], 
+#              color=colors['Whisker'], lw=2)
+#     ax1.text(x_scale_wh + 0.05, y_scale_wh_btm + bar_len_deg/2, "10°", 
+#              color=colors['Whisker'], rotation=0, va='center', fontsize=10)
+
+#     # Save
+#     import os
+#     save_path = os.path.join(save_dir, f"trace_validation_{cell_id_str.replace(' ', '_')}.png")
+#     plt.savefig(save_path, dpi=300, bbox_inches='tight')
+#     print(f"Neuroscience style plot saved to: {save_path}")
+#     plt.close()
+
 def plot_neuroscience_style_validation(grouped_cells, cols, fs=20000, 
                                        target_index=0, target_type=None, 
                                        save_dir="."):
     """
-    Generates a publication-quality trace plot matching the reference style:
-    - Top: Whisker Angle (Green)
-    - Bottom: Vm (Color-coded by cell type)
-    - Vertical bars indicating Active Touch onsets.
-    - Floating scale bars (No box axes).
+    Generates a publication-quality trace plot matching the reference style.
+    IMPROVEMENT: Automatically identifies the active touch bout and zooms the x-axis 
+    to show only the relevant activity (with 1s padding), preserving signal context.
     """
-    
+    import numpy as np
+    import matplotlib.pyplot as plt
+    from scipy.signal import bessel, sosfilt
+    from scipy.ndimage import zoom
+    import os
+
     # --- 1. CONFIGURATION ---
-    # Colors matching standard literature (and your image)
     colors = {
         'SST': '#E69F00',  # Orange/Gold
         'PV':  '#D55E00',  # Vermillion/Red
@@ -459,7 +639,7 @@ def plot_neuroscience_style_validation(grouped_cells, cols, fs=20000,
         'Whisker': '#009E73' # Green
     }
     
-    # --- 2. SEARCH LOGIC (Same as before) ---
+    # --- 2. SEARCH LOGIC ---
     print(f"Searching for match #{target_index + 1} (Type: {target_type if target_type else 'Any'})...")
     
     matches_found = 0
@@ -473,18 +653,18 @@ def plot_neuroscience_style_validation(grouped_cells, cols, fs=20000,
         if target_type is not None and target_type != current_type:
             continue
 
+        # Filter for 'Active Touch' sweeps
         at_sweeps = cell_df[cell_df[cols['sweep_type']].astype(str).str.contains('active touch', case=False)]
         
         sweep_candidate = None
-        
         for _, sweep in at_sweeps.iterrows():
             contacts = sweep[cols['contacts']]
             if contacts is None: continue
             contacts = np.array(contacts)
             if contacts.ndim == 1: contacts = contacts.reshape(1, -1)
             
-            # Simple check: enough contacts to look "busy" like the image
-            if len(contacts) > 3:
+            # Criteria: Find a sweep with a "burst" of contacts (>2) for a good plot
+            if len(contacts) > 2:
                 sweep_candidate = sweep
                 contacts_arr = contacts[:, 0]
                 break 
@@ -499,36 +679,57 @@ def plot_neuroscience_style_validation(grouped_cells, cols, fs=20000,
                 matches_found += 1
 
     if found_sweep is None:
-        print("Target cell not found.")
+        print("Target cell/sweep not found.")
         return
 
     # --- 3. DATA PREP ---
     raw_vm = np.array(found_sweep[cols['vm']])
+    total_samples = len(raw_vm)
     
-    # Try to grab whisker angle. If missing, make a flat dummy line.
+    # Whisker processing (Zoom to match Vm length if necessary)
     if 'whisker_angle' in cols and cols['whisker_angle'] in found_sweep:
         raw_wh = np.array(found_sweep[cols['whisker_angle']])
-        # Downsample whisker if it's at same fs as Vm (usually whisker is 500Hz, Vm 20kHz)
-        # Assuming they are already aligned or same length for plotting:
         if len(raw_wh) != len(raw_vm):
-            # Simple resize for visualization only
-            from scipy.ndimage import zoom
             zoom_factor = len(raw_vm) / len(raw_wh)
             raw_wh = zoom(raw_wh, zoom_factor)
     else:
         raw_wh = np.zeros_like(raw_vm)
 
-    # Filter Vm for cleaner plot (remove high freq noise)
-    sos = bessel(4, 1000, 'low', fs=fs, output='sos') # 1kHz filter
+    # Filter Vm (Lowpass ~1kHz for clean visualization)
+    sos = bessel(4, 1000, 'low', fs=fs, output='sos')
     filt_vm = sosfilt(sos, raw_vm)
     
-    t = np.arange(len(filt_vm)) / fs
+    # Full Time vector
+    t_full = np.arange(total_samples) / fs
 
-    # --- 4. PLOTTING ---
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 6), sharex=True, 
-                                   gridspec_kw={'height_ratios': [1, 2], 'hspace': 0.05})
+    # --- 4. ZOOM LOGIC (Smart Windowing) ---
+    # Find start and end of the contact "bout"
+    t_first = contacts_arr[0]
+    t_last = contacts_arr[-1]
     
-    # Remove standard axes (Frames)
+    # Add padding: 1.0s before first touch, 1.5s after last touch
+    # This ensures we see the approach and the post-touch response
+    t_start_zoom = max(0, t_first - 1.0) 
+    t_end_zoom = min(t_full[-1], t_last + 1.5)
+    
+    # Enforce a minimum window size of 4s for aesthetics
+    if (t_end_zoom - t_start_zoom) < 4.0:
+        t_end_zoom = min(t_full[-1], t_start_zoom + 4.0)
+
+    # Convert time window to indices
+    idx_start = int(t_start_zoom * fs)
+    idx_end = int(t_end_zoom * fs)
+
+    # Slice the data for the plot
+    t_plot = t_full[idx_start:idx_end]
+    vm_plot = filt_vm[idx_start:idx_end] * 1000 # Convert to mV
+    wh_plot = raw_wh[idx_start:idx_end]
+    
+    # --- 5. PLOTTING ---
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 6), sharex=True, 
+                                   gridspec_kw={'height_ratios': [1, 2.5], 'hspace': 0.05})
+    
+    # Remove box frames (Neuroscience style)
     for ax in [ax1, ax2]:
         ax.spines['top'].set_visible(False)
         ax.spines['right'].set_visible(False)
@@ -538,84 +739,74 @@ def plot_neuroscience_style_validation(grouped_cells, cols, fs=20000,
         ax.set_xticks([])
 
     # A. WHISKER TRACE (Top)
-    ax1.plot(t, raw_wh, color=colors['Whisker'], lw=1)
+    ax1.plot(t_plot, wh_plot, color=colors['Whisker'], lw=1)
     ax1.text(-0.02, 0.5, "Whisker\nangle", transform=ax1.transAxes, 
-             color=colors['Whisker'], ha='right', va='center', fontsize=12, fontweight='bold')
+             color=colors['Whisker'], ha='right', va='center', fontsize=11, fontweight='bold')
 
     # B. VM TRACE (Bottom)
     c_vm = colors.get(cell_type_str, 'black')
-    ax2.plot(t, filt_vm * 1000, color=c_vm, lw=0.8) # Convert to mV
-    
-    label_y = np.percentile(filt_vm*1000, 50)
+    ax2.plot(t_plot, vm_plot, color=c_vm, lw=0.8)
     ax2.text(-0.02, 0.5, f"{cell_id_str}\n{cell_type_str}\nVm", transform=ax2.transAxes, 
-             color=c_vm, ha='right', va='center', fontsize=12, fontweight='bold')
+             color=c_vm, ha='right', va='center', fontsize=11, fontweight='bold')
 
-    # C. CONTACT LINES (Grey vertical bars)
-    # Span across both axes
-    trans = transforms.blended_transform_factory(ax2.transData, fig.transFigure)
+    # C. CONTACT BARS (Vertical Grey Lines)
+    # Only plot contacts visible in the zoomed window
+    visible_contacts = [c for c in contacts_arr if t_start_zoom <= c <= t_end_zoom]
     
-    for onset in contacts_arr:
-        # Check if onset is within plot range
-        if onset > t[-1]: continue
+    for onset in visible_contacts:
+        # Draw vertical line across both subplots
+        ax1.axvline(onset, color='grey', alpha=0.3, lw=2)
+        ax2.axvline(onset, color='grey', alpha=0.3, lw=2)
         
-        # Plot grey bar spanning both subplots visual area
-        # We use a trick: axvline on both, or a rect. 
-        # Simpler: just lines on both axes
-        ax1.axvline(onset, color='grey', alpha=0.4, lw=2)
-        ax2.axvline(onset, color='grey', alpha=0.4, lw=2)
-    
-    # Label "Active touch" at the bottom
-    ax2.text(0, -0.1, "Active\ntouch", transform=ax2.transAxes, 
-             color='grey', ha='right', va='top', fontsize=12)
-    # Add little ticks at the bottom for contacts
-    for onset in contacts_arr:
-        if onset > t[-1]: continue
-        ax2.plot([onset, onset], [np.min(filt_vm*1000)-2, np.min(filt_vm*1000)-6], 
-                 color='grey', lw=1.5, clip_on=False)
+        # Add small "ticks" at the bottom of the Vm trace
+        vm_min = np.min(vm_plot)
+        ax2.plot([onset, onset], [vm_min-2, vm_min-6], color='grey', lw=1.5, clip_on=False)
 
-    # --- 5. SCALE BARS (The "Floating" Look) ---
-    
-    # Time Scale (Horizontal) - e.g., 2 seconds
-    # Place it bottom right
-    bar_len_s = 2.0
-    x_start = t[-1] - bar_len_s - 1.0 # 1s padding from right
-    y_start_vm = np.min(filt_vm*1000) + 5
-    
-    ax2.plot([x_start, x_start + bar_len_s], [y_start_vm, y_start_vm], color='black', lw=2)
-    ax2.text(x_start + bar_len_s/2, y_start_vm - 2, "2 s", ha='center', va='top', fontsize=10)
+    # Label "Active Touch" at the bottom (centered on the first few contacts)
+    if visible_contacts:
+        label_pos = visible_contacts[0]
+        ax2.text(label_pos, np.min(vm_plot)-12, "Active\ntouch", 
+                 color='grey', ha='left', va='top', fontsize=10)
 
-    # Vm Scale (Vertical) - e.g., 10 mV
+    # --- 6. FLOATING SCALE BARS (Dynamic) ---
+    # Position bars at the bottom-right of the zoomed view
+    
+    # Time Scale Bar
+    duration = t_end_zoom - t_start_zoom
+    bar_len_s = 1.0 if duration > 3.0 else 0.5
+    bar_text = f"{int(bar_len_s)} s" if bar_len_s >=1 else f"{bar_len_s} s"
+
+    x_bar_start = t_plot[-1] - bar_len_s - (duration * 0.05) # 5% padding from right edge
+    y_bar_vm = np.min(vm_plot)
+    
+    ax2.plot([x_bar_start, x_bar_start + bar_len_s], [y_bar_vm, y_bar_vm], color='black', lw=2)
+    ax2.text(x_bar_start + bar_len_s/2, y_bar_vm - 2, bar_text, ha='center', va='top', fontsize=10)
+
+    # Vm Scale Bar (10 mV)
     bar_len_mv = 10
-    x_scale_vm = x_start + bar_len_s + 0.2
-    y_scale_vm_btm = y_start_vm + 5
+    x_scale_vert = x_bar_start + bar_len_s + (duration * 0.02)
+    y_scale_btm = y_bar_vm + 5
     
-    ax2.plot([x_scale_vm, x_scale_vm], [y_scale_vm_btm, y_scale_vm_btm + bar_len_mv], 
+    ax2.plot([x_scale_vert, x_scale_vert], [y_scale_btm, y_scale_btm + bar_len_mv], 
              color=c_vm, lw=2)
-    ax2.text(x_scale_vm + 0.05, y_scale_vm_btm + bar_len_mv/2, "10 mV", 
+    ax2.text(x_scale_vert + (duration*0.01), y_scale_btm + bar_len_mv/2, "10 mV", 
              color=c_vm, rotation=0, va='center', fontsize=10)
 
-    # Whisker Scale (Vertical) - e.g., 10 degrees
-    # We need range of whisker to place this well
-    wh_range = np.max(raw_wh) - np.min(raw_wh)
-    if wh_range == 0:
-        wh_range = 1 # avoid div/0
+    # Whisker Scale Bar (10 deg) - Plotted on Top Axis
+    # Align X position with the Vm scale bar below
+    wh_min = np.min(wh_plot)
+    bar_len_deg = 10
     
-    bar_len_deg = 10 
-    x_scale_wh = x_scale_vm
-    y_scale_wh_btm = np.mean(raw_wh)
-    
-    ax1.plot([x_scale_wh, x_scale_wh], [y_scale_wh_btm, y_scale_wh_btm + bar_len_deg], 
-             color=colors['Whisker'], lw=2)
-    ax1.text(x_scale_wh + 0.05, y_scale_wh_btm + bar_len_deg/2, "10°", 
+    ax1.plot([x_scale_vert, x_scale_vert], [wh_min, wh_min + bar_len_deg], 
+             color=colors['Whisker'], lw=2, clip_on=False)
+    ax1.text(x_scale_vert + (duration*0.01), wh_min + bar_len_deg/2, "10°", 
              color=colors['Whisker'], rotation=0, va='center', fontsize=10)
 
     # Save
-    import os
-    save_path = os.path.join(save_dir, f"trace_validation_{cell_id_str.replace(' ', '_')}.png")
+    save_path = os.path.join(save_dir, f"trace_validation_ZOOM_{cell_id_str.replace(' ', '_')}.png")
     plt.savefig(save_path, dpi=300, bbox_inches='tight')
-    print(f"Neuroscience style plot saved to: {save_path}")
+    print(f"Zoomed neuroscience plot saved to: {save_path}")
     plt.close()
-
 
 def plot_pv_coupling_diagnostic(df_metrics):
     if df_metrics.empty or 'PV' not in df_metrics['Cell_Type'].values:
@@ -701,6 +892,14 @@ def generate_main_figures(df_metrics, trace_storage):
     plt.close()
 
     # 2. Boxplots: latency + slope (long ICI)
+
+    # print the medians for debugging
+    for ctype in df_metrics['Cell_Type'].unique():
+        sub = df_metrics[df_metrics['Cell_Type'] == ctype]
+        median_latency = sub['Time_to_Peak_ms'].median()
+        median_slope = sub['Max_Slope'].median()
+        print(f"Median Latency for {ctype}: {median_latency:.2f} ms")
+        print(f"Median Max Slope for {ctype}: {median_slope:.2f} V/s")
     plt.figure(figsize=(12, 5))
     plt.subplot(1, 2, 1)
     sns.boxplot(x='Cell_Type', y='Time_to_Peak_ms', data=df_metrics,
@@ -781,6 +980,11 @@ def generate_main_figures(df_metrics, trace_storage):
     plt.close()
 
     # 7. Slope Adaptation
+    # median ratios for debugging
+    for ctype in df_metrics['Cell_Type'].unique():
+        sub = df_metrics[df_metrics['Cell_Type'] == ctype]
+        median_ratio = sub['Slope_Adaptation_Ratio'].median()
+        print(f"Median Slope Adaptation Ratio for {ctype}: {median_ratio:.3f}")
     plt.figure(figsize=(6, 5))
     df_ratio = df_metrics.dropna(subset=['Slope_Adaptation_Ratio'])
     sns.boxplot(x='Cell_Type', y='Slope_Adaptation_Ratio', data=df_ratio, palette=colors, showfliers=False)
@@ -829,6 +1033,14 @@ def generate_main_figures(df_metrics, trace_storage):
     df_amp_ratio = df_metrics.dropna(subset=['Amp_Adaptation_Ratio'])
     # Clean extreme outliers for plotting
     df_amp_ratio = df_amp_ratio[df_amp_ratio['Amp_Adaptation_Ratio'].between(-2, 5)] 
+
+    median_ratios = df_amp_ratio.groupby('Cell_Type')['Amp_Adaptation_Ratio'].median()
+    print("Median Amplitude Adaptation Ratios:")
+    for ctype, median_val in median_ratios.items():
+        print(f"  {ctype}: {median_val:.3f}")
+    mean_ratio = df_amp_ratio['Amp_Adaptation_Ratio'].mean()
+    for ctype, median_val in median_ratios.items():
+        print(f"  {ctype}: {median_val:.3f}")
     
     sns.boxplot(x='Cell_Type', y='Amp_Adaptation_Ratio', data=df_amp_ratio, palette=colors, showfliers=False)
     plt.axhline(1.0, color='grey', linestyle='--', label='No Change')
