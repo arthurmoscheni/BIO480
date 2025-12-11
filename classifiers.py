@@ -158,6 +158,12 @@ def run_classifier_analysis(df_metrics, allowed_classes=None, suffix="", use_bay
                 )
                 opt.fit(X, y)
                 clf = opt.best_estimator_
+                print(f"   Best Params: {opt.best_params_}")
+                # feature_importances_ is only available for some models
+                if hasattr(opt.best_estimator_.named_steps[base_model.__class__.__name__.lower()], 'feature_importances_'):
+                    importances = opt.best_estimator_.named_steps[base_model.__class__.__name__.lower()].feature_importances_
+                    for f_name, imp in zip(features, importances):
+                        print(f"      Feature Importance - {f_name}: {imp:.4f}")
             except Exception as e:
                 print(f"   Bayes search failed ({e}). Falling back to default.")
                 clf = pipe
@@ -173,6 +179,12 @@ def run_classifier_analysis(df_metrics, allowed_classes=None, suffix="", use_bay
             model_scores[name] = bal_acc
             print(f"   Balanced Accuracy: {bal_acc:.3f}")
             print(f"   Macro F1:          {f1_macro:.3f}")
+
+            # feature importances for random forest
+            if name == 'Random Forest':
+                importances = clf.named_steps['randomforestclassifier'].feature_importances_
+                for f_name, imp in zip(features, importances):
+                    print(f"      Feature Importance - {f_name}: {imp:.4f}")
 
             if f1_macro > best_score:
                 best_score = f1_macro

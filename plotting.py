@@ -909,197 +909,51 @@ def generate_main_figures(df_metrics, trace_storage):
     plt.close()
 
 
-# import os
-# import numpy as np
-# import matplotlib.pyplot as plt
-# import seaborn as sns
-# from scipy import stats
+# Add to plotting.py
 
-# def formatting_tweaks(ax, title=None, x_label=None, y_label=None):
-#     """Helper to apply consistent scientific styling to any axis."""
-#     sns.despine(ax=ax, trim=False)
-#     if title: ax.set_title(title, fontweight='bold', pad=10)
-#     if x_label: ax.set_xlabel(x_label, fontsize=12)
-#     if y_label: ax.set_ylabel(y_label, fontsize=12)
-#     ax.tick_params(axis='both', which='major', labelsize=10)
-#     ax.grid(True, linestyle=':', alpha=0.4)
-
-# def generate_main_figures(df_metrics, trace_storage, config):
-#     if df_metrics.empty:
-#         return
-
-#     # --- 0. Global Style Setup ---
-#     # This fixes the "microscopic font" issue globally
-#     sns.set_context("notebook", font_scale=1.2)
-#     sns.set_style("ticks")
+def plot_facilitation_difference(trace_storage, config):
+    """
+    Plots the SUBTRACTION (Short - Long) to isolate the facilitation component.
+    """
+    print("Generating Facilitation Difference Plot...")
     
-#     colors = config.COLORS
-#     time_axis = config.TIME_AXIS
+    plt.figure(figsize=(10, 6))
+    time_axis = config.TIME_AXIS
+    colors = config.COLORS
     
-#     # Ensure output directory exists
-#     os.makedirs(config.FIG_DIR, exist_ok=True)
-
-#     # --- 1. Standard Waveforms with SEM (Grand Average) ---
-#     plt.figure(figsize=(10, 6))
-#     ax = plt.gca()
-    
-#     for ctype in ['EXC', 'PV', 'SST', 'VIP']:
-#         if ctype not in trace_storage: continue
-#         traces = trace_storage[ctype]['long']
+    # We only care about SST (and maybe VIP/PV for contrast)
+    for ctype in ['SST', 'PV', 'EXC']:
+        if ctype not in trace_storage: continue
         
-#         if len(traces) > 0:
-#             # Convert list of arrays to matrix
-#             stack = np.vstack(traces) * 1000 # Convert to mV
-#             mean_trace = np.mean(stack, axis=0)
-#             sem_trace = stats.sem(stack, axis=0) # Standard Error of Mean
-            
-#             # Plot Mean
-#             ax.plot(time_axis, mean_trace, color=colors[ctype], 
-#                     label=f"{ctype} (n={len(traces)})", linewidth=2.5)
-            
-#             # Shade the error (SEM) - crucial for showing variance
-#             ax.fill_between(time_axis, mean_trace - sem_trace, mean_trace + sem_trace,
-#                             color=colors[ctype], alpha=0.15, edgecolor=None)
-    
-#     ax.axvline(0, color='#444444', linestyle='--', linewidth=1.5, alpha=0.8, label='Touch Onset')
-#     formatting_tweaks(ax, title="Active Touch Response Dynamics (Grand Average)", 
-#                       x_label="Time from Contact (ms)", y_label="Vm Change (mV)")
-#     ax.set_xlim(-20, 60)
-#     ax.legend(frameon=False, loc='upper left')
-    
-#     plt.tight_layout()
-#     plt.savefig(os.path.join(config.FIG_DIR, "fig1_waveforms_long_ici.png"), dpi=300)
-#     plt.close()
-
-#     # --- 2. Boxplots with Raw Data Points (Honesty check) ---
-#     fig, axes = plt.subplots(1, 2, figsize=(14, 6))
-    
-#     # Latency
-#     sns.boxplot(x='Cell_Type', y='Time_to_Peak_ms', data=df_metrics,
-#                 palette=colors, showfliers=False, ax=axes[0], width=0.5, boxprops={'alpha': 0.6})
-#     # Add stripplot to show the N=2 for PV clearly
-#     sns.stripplot(x='Cell_Type', y='Time_to_Peak_ms', data=df_metrics,
-#                   color='black', size=4, alpha=0.6, jitter=True, ax=axes[0])
-#     formatting_tweaks(axes[0], title="Response Latency (Time to Peak)", y_label="Time (ms)")
-
-#     # Slope
-#     sns.boxplot(x='Cell_Type', y='Max_Slope', data=df_metrics,
-#                 palette=colors, showfliers=False, ax=axes[1], width=0.5, boxprops={'alpha': 0.6})
-#     sns.stripplot(x='Cell_Type', y='Max_Slope', data=df_metrics,
-#                   color='black', size=4, alpha=0.6, jitter=True, ax=axes[1])
-#     formatting_tweaks(axes[1], title="Response Speed (Max Slope)", y_label="Slope (V/s)")
-    
-#     plt.tight_layout()
-#     plt.savefig(os.path.join(config.FIG_DIR, "fig2_latency_and_slope.png"), dpi=300)
-#     plt.close()
-
-#     # --- 3. Latency Jitter ---
-#     plt.figure(figsize=(7, 5))
-#     ax = plt.gca()
-#     sns.boxplot(x='Cell_Type', y='Latency_Jitter_ms', data=df_metrics,
-#                 palette=colors, showfliers=False, width=0.5, boxprops={'alpha': 0.6}, ax=ax)
-#     sns.stripplot(x='Cell_Type', y='Latency_Jitter_ms', data=df_metrics,
-#                   color='k', alpha=0.5, size=5, ax=ax)
-    
-#     formatting_tweaks(ax, title="Latency Jitter (Precision)", y_label="SD of Time-to-Peak (ms)")
-#     plt.tight_layout()
-#     plt.savefig(os.path.join(config.FIG_DIR, "fig3_latency_jitter.png"), dpi=300)
-#     plt.close()
-
-#     # --- 4. Effect of ICI (Paired) ---
-#     # NOTE: Boxplots are bad for paired data. A slopegraph or connected dots is better, 
-#     # but sticking to boxplots for summary, let's make them cleaner.
-#     df_ici = df_metrics.melt(
-#         id_vars=['Cell_Type', 'Cell_ID'],
-#         value_vars=['Time_to_Peak_ms', 'Time_to_Peak_short_ms'],
-#         var_name='ICI_condition', value_name='Time_to_Peak_cond_ms'
-#     ).dropna()
-    
-#     df_ici['ICI_condition'] = df_ici['ICI_condition'].map(
-#         {'Time_to_Peak_ms': 'Long', 'Time_to_Peak_short_ms': 'Short'}
-#     )
-
-#     if not df_ici.empty:
-#         plt.figure(figsize=(10, 5))
-#         ax = plt.gca()
-#         sns.boxplot(x='Cell_Type', y='Time_to_Peak_cond_ms', hue='ICI_condition', 
-#                     data=df_ici, showfliers=False, palette="Blues", ax=ax)
-#         formatting_tweaks(ax, title="Effect of Inter-Contact Interval on Latency", y_label="Latency (ms)")
-#         ax.legend(title="ICI Condition", frameon=False)
-#         plt.tight_layout()
-#         plt.savefig(os.path.join(config.FIG_DIR, "fig4_ici_effect_latency.png"), dpi=300)
-#         plt.close()
-
-#     # --- 11. Waveform Comparison (The "Money" Plot for Adaptation) ---
-#     # We prioritize this visual because it shows the mechanism
-#     fig, axes = plt.subplots(2, 2, figsize=(12, 10))
-#     axes = axes.flatten()
-    
-#     for i, ctype in enumerate(['EXC', 'PV', 'SST', 'VIP']):
-#         ax = axes[i]
-#         if ctype not in trace_storage: 
-#             ax.axis('off')
-#             continue
-
-#         traces_l = trace_storage[ctype]['long']
-#         traces_s = trace_storage[ctype]['short']
+        # Get Mean Traces
+        long_data = trace_storage[ctype]['long']
+        short_data = trace_storage[ctype]['short']
         
-#         if len(traces_l) > 0 and len(traces_s) > 0:
-#             # Process Long
-#             stack_l = np.vstack(traces_l) * 1000
-#             mean_l = np.mean(stack_l, axis=0)
-#             sem_l = stats.sem(stack_l, axis=0)
+        if len(long_data) > 0 and len(short_data) > 0:
+            mean_long = np.mean(np.vstack(long_data), axis=0) * 1000
+            mean_short = np.mean(np.vstack(short_data), axis=0) * 1000
             
-#             # Process Short
-#             stack_s = np.vstack(traces_s) * 1000
-#             mean_s = np.mean(stack_s, axis=0)
-#             sem_s = stats.sem(stack_s, axis=0)
+            # THE MAGIC STEP: Calculate the Difference
+            diff_trace = mean_short - mean_long
             
-#             # Plot Long (Solid, darker)
-#             ax.plot(time_axis, mean_l, color=colors[ctype], linestyle='-', linewidth=2.5, label='Long ICI')
-#             ax.fill_between(time_axis, mean_l - sem_l, mean_l + sem_l, color=colors[ctype], alpha=0.1)
+            # Plot
+            plt.plot(time_axis, diff_trace, color=colors[ctype], linewidth=1, label=f"{ctype} Difference")
+            
+            # Fill the area to highlight "Facilitation" (Positive) vs "Depression" (Negative)
+            plt.fill_between(time_axis, diff_trace, 0, where=(diff_trace > 0), 
+                             color=colors[ctype], alpha=0.2, interpolate=True)
+            plt.fill_between(time_axis, diff_trace, 0, where=(diff_trace < 0), 
+                             color='gray', alpha=0.1, interpolate=True)
 
-#             # Plot Short (Dashed, same color but maybe lighter or just dashed)
-#             ax.plot(time_axis, mean_s, color='gray', linestyle='--', linewidth=2, label='Short ICI')
-#             # We use gray for Short ICI to create contrast without color clashing
-            
-#             # Highlight difference
-#             ax.fill_between(time_axis, mean_l, mean_s, color=colors[ctype], alpha=0.05)
-            
-#             formatting_tweaks(ax, title=f"{ctype} Adaptation", x_label="Time (ms)", y_label="Vm (mV)")
-#             ax.set_xlim(-10, 80)
-#             if i == 0: ax.legend(frameon=False) # Only legend on first plot to save space
-            
-#     plt.tight_layout()
-#     plt.savefig(os.path.join(config.FIG_DIR, "fig14_waveform_comparison.png"), dpi=300)
-#     plt.close()
-
-#     # --- 13. Amplitude Adaptation Ratio (The "Facilitation" Story) ---
-#     plt.figure(figsize=(7, 6))
-#     ax = plt.gca()
+    plt.axhline(0, color='black', linestyle='--')
+    plt.axvline(0, color='black', linestyle=':')
     
-#     df_amp_ratio = df_metrics.dropna(subset=['Amp_Adaptation_Ratio'])
-#     # Filter extreme outliers for plotting clarity
-#     df_amp_ratio = df_amp_ratio[df_amp_ratio['Amp_Adaptation_Ratio'].between(-2, 5)]
+    plt.title("The Facilitation Signature: (Short ICI) minus (Long ICI)")
+    plt.xlabel("Time from Contact (ms)")
+    plt.ylabel("Facilitation Magnitude (mV)")
+    plt.legend()
+    plt.xlim(-10, 80)
     
-#     # Add reference line FIRST so it is behind data
-#     ax.axhline(1.0, color='#555555', linestyle='--', linewidth=1.5, zorder=0, label='No Adaptation')
-    
-#     sns.boxplot(x='Cell_Type', y='Amp_Adaptation_Ratio', data=df_amp_ratio, 
-#                 palette=colors, showfliers=False, ax=ax, width=0.5, boxprops={'alpha': 0.6})
-#     sns.stripplot(x='Cell_Type', y='Amp_Adaptation_Ratio', data=df_amp_ratio,
-#                   color='k', size=4, alpha=0.6, jitter=True, ax=ax)
-    
-#     # Annotate the SST Facilitation
-#     sst_median = df_amp_ratio[df_amp_ratio['Cell_Type']=='SST']['Amp_Adaptation_Ratio'].median()
-#     if not np.isnan(sst_median) and sst_median > 1.0:
-#         ax.text(2, sst_median + 0.2, "Facilitation", ha='center', color=colors['SST'], fontweight='bold')
-    
-#     formatting_tweaks(ax, title="Functional Switch: Depression vs Facilitation", 
-#                       y_label="Adaptation Ratio (Short / Long)")
-    
-#     plt.tight_layout()
-#     plt.savefig(os.path.join(config.FIG_DIR, "fig13_amplitude_ratio.png"), dpi=300)
-#     plt.close()
-    
-#     print("\nHigh-quality figures generated successfully.")
+    save_path = os.path.join(config.FIG_DIR, "fig_facilitation_difference.png")
+    plt.savefig(save_path, dpi=300)
+    print(f"Facilitation plot saved to {save_path}")

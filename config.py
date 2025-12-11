@@ -13,7 +13,6 @@ os.makedirs(DATA_DIR, exist_ok=True)
 
 # --- Analysis Parameters ---
 FS = 20000  # Sampling frequency
-ICI_THRESHOLD = 0.200  # Seconds
 FILTER_UNSTABLE_TRIALS = True
 MAX_PRE_TOUCH_SLOPE = 1.0  # V/s
 
